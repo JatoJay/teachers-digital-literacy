@@ -5,6 +5,7 @@ import { BookOpen, Plus, Trash2, Eye, ArrowLeft, Sparkles, Copy, Download, Check
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select, TextArea } from '../components/ui'
 import { useLessonGenerator } from '../hooks/useLessonGenerator'
+import { useLocalContext } from '../hooks/useLocalContext'
 import { getLessonPlans, deleteLessonPlan } from '../lib/db'
 import type { EducationLevel, Subject } from '../types'
 
@@ -61,6 +62,7 @@ export default function LessonPlannerPage() {
 
   const { isGenerating, streamedContent, error, generate, reset } = useLessonGenerator()
   const lessonPlans = useLiveQuery(() => getLessonPlans(), [])
+  const localContext = useLocalContext()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -73,6 +75,7 @@ export default function LessonPlannerPage() {
       grade: formData.grade,
       duration: parseInt(formData.duration),
       additionalContext: formData.additionalContext,
+      localContext,
     })
   }
 

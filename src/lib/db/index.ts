@@ -1,10 +1,11 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { LessonPlan, Activity, Assessment, AppSettings } from '../../types'
+import type { LessonPlan, Activity, Assessment, AppSettings, SchemeOfWork } from '../../types'
 
 const db = new Dexie('TeachersDigitalLiteracy') as Dexie & {
   lessonPlans: EntityTable<LessonPlan, 'id'>
   activities: EntityTable<Activity, 'id'>
   assessments: EntityTable<Assessment, 'id'>
+  schemes: EntityTable<SchemeOfWork, 'id'>
   settings: EntityTable<AppSettings & { id: string }, 'id'>
 }
 
@@ -13,6 +14,10 @@ db.version(1).stores({
   activities: 'id, subject, level, createdAt',
   assessments: 'id, subject, level, createdAt',
   settings: 'id',
+})
+
+db.version(2).stores({
+  schemes: 'id, subject, level, term, createdAt',
 })
 
 export { db }
@@ -61,4 +66,20 @@ export async function saveAssessment(assessment: Assessment) {
 
 export async function getAssessments() {
   return db.assessments.orderBy('createdAt').reverse().toArray()
+}
+
+export async function saveScheme(scheme: SchemeOfWork) {
+  await db.schemes.put(scheme)
+}
+
+export async function getSchemes() {
+  return db.schemes.orderBy('createdAt').reverse().toArray()
+}
+
+export async function getScheme(id: string) {
+  return db.schemes.get(id)
+}
+
+export async function deleteScheme(id: string) {
+  await db.schemes.delete(id)
 }

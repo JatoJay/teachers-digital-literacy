@@ -1,20 +1,30 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ClipboardCheck, Plus, Trash2, Sparkles, Copy, Download, Check } from 'lucide-react'
+import { CalendarRange, Plus, Trash2, Sparkles, Copy, Download, Check, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select } from '../components/ui'
 import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
-import { buildAssessmentPrompt } from '../lib/prompts/lesson-plan'
-import { getAssessments, saveAssessment, db } from '../lib/db'
-import type { EducationLevel, Subject, Assessment } from '../types'
+import { buildSchemePrompt } from '../lib/prompts/lesson-plan'
+import { getSchemes, saveScheme, deleteScheme } from '../lib/db'
+import type { EducationLevel, Subject, Term, SchemeOfWork } from '../types'
 
 const SUBJECTS: { value: Subject; label: string }[] = [
   { value: 'mathematics', label: 'Mathematics' },
   { value: 'english', label: 'English Language' },
   { value: 'science', label: 'Science' },
   { value: 'social_studies', label: 'Social Studies' },
+  { value: 'civic_education', label: 'Civic Education' },
+  { value: 'agriculture', label: 'Agricultural Science' },
+  { value: 'computer_science', label: 'Computer Science / ICT' },
+  { value: 'business_studies', label: 'Business Studies' },
+  { value: 'creative_arts', label: 'Creative Arts' },
+  { value: 'physical_education', label: 'Physical Education' },
+  { value: 'religious_studies', label: 'Religious Studies' },
+  { value: 'local_language', label: 'Local Language' },
+  { value: 'french', label: 'French' },
+  { value: 'arabic', label: 'Arabic' },
   { value: 'other', label: 'Other Subject' },
 ]
 
@@ -24,26 +34,27 @@ const LEVELS: { value: EducationLevel; label: string }[] = [
   { value: 'tertiary', label: 'University/Polytechnic' },
 ]
 
-const ASSESSMENT_TYPES = [
-  { value: 'quiz', label: 'Quick Quiz (5-10 questions)' },
-  { value: 'test', label: 'Full Test (15-20 questions)' },
-  { value: 'worksheet', label: 'Practice Worksheet' },
+const TERMS: { value: Term; label: string }[] = [
+  { value: 'first', label: 'First Term' },
+  { value: 'second', label: 'Second Term' },
+  { value: 'third', label: 'Third Term' },
 ]
 
-export default function AssessmentsPage() {
+export default function SchemeOfWorkPage() {
   const { generate, isReady } = useModel()
   const [showForm, setShowForm] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedContent, setGeneratedContent] = useState('')
+  const [viewing, setViewing] = useState<SchemeOfWork | null>(null)
   const [formData, setFormData] = useState({
-    topic: '',
     subject: '' as Subject | '',
     level: '' as EducationLevel | '',
-    assessmentType: 'quiz' as 'quiz' | 'test' | 'worksheet',
-    questionCount: '10',
+    grade: '',
+    term: 'first' as Term,
+    weekCount: '12',
   })
 
-  const assessments = useLiveQuery(() => getAssessments(), [])
+  const schemes = useLiveQuery(() => getSchemes(), [])
   const localContext = useLocalContext()
   const [copied, setCopied] = useState(false)
   const bufferRef = useRef('')
@@ -79,11 +90,13 @@ export default function AssessmentsPage() {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${title} - Assessment</title>
+          <title>${title} - Scheme of Work</title>
           <style>
             body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1, h2 { color: #0d9488; }
+            h1 { color: #6366f1; border-bottom: 2px solid #e0e7ff; padding-bottom: 8px; }
+            h2 { color: #4f46e5; margin-top: 28px; }
             strong { color: #334155; }
+            ul { padding-left: 20px; }
           </style>
         </head>
         <body>
@@ -99,7 +112,7 @@ export default function AssessmentsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.topic || !formData.subject || !formData.level) return
+    if (!formData.subject || !formData.level || !formData.grade) return
     if (!isReady) return
 
     setIsGenerating(true)
@@ -113,12 +126,13 @@ export default function AssessmentsPage() {
     }
 
     try {
-      const prompt = buildAssessmentPrompt({
-        topic: formData.topic,
+      const weekCount = parseInt(formData.weekCount)
+      const prompt = buildSchemePrompt({
         subject: formData.subject as Subject,
         level: formData.level as EducationLevel,
-        assessmentType: formData.assessmentType,
-        questionCount: parseInt(formData.questionCount),
+        grade: formData.grade,
+        term: formData.term,
+        weekCount,
         localContext,
       })
 
@@ -133,19 +147,24 @@ export default function AssessmentsPage() {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
       }
-      setGeneratedContent(bufferRef.current)
+      const finalContent = bufferRef.current
+      setGeneratedContent(finalContent)
 
-      const assessment: Assessment = {
+      const termLabel = TERMS.find((t) => t.value === formData.term)?.label ?? ''
+      const subjectLabel = SUBJECTS.find((s) => s.value === formData.subject)?.label ?? ''
+      const scheme: SchemeOfWork = {
         id: crypto.randomUUID(),
-        title: formData.topic,
-        type: formData.assessmentType,
-        questions: [],
-        level: formData.level as EducationLevel,
+        title: `${subjectLabel} - ${formData.grade} - ${termLabel}`,
         subject: formData.subject as Subject,
+        level: formData.level as EducationLevel,
+        grade: formData.grade,
+        term: formData.term,
+        weekCount,
+        content: finalContent,
         createdAt: new Date(),
       }
 
-      await saveAssessment(assessment)
+      await saveScheme(scheme)
     } catch (err) {
       console.error(err)
     } finally {
@@ -154,21 +173,62 @@ export default function AssessmentsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (confirm('Delete this assessment?')) {
-      await db.assessments.delete(id)
+    if (confirm('Delete this scheme of work?')) {
+      await deleteScheme(id)
     }
   }
 
   const handleReset = () => {
     setShowForm(true)
     setGeneratedContent('')
+    setViewing(null)
     setFormData({
-      topic: '',
       subject: '',
       level: '',
-      assessmentType: 'quiz',
-      questionCount: '10',
+      grade: '',
+      term: 'first',
+      weekCount: '12',
     })
+  }
+
+  if (viewing) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="space-y-6"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-slate-800 truncate pr-3">{viewing.title}</h2>
+          <Button variant="ghost" onClick={() => setViewing(null)}>
+            Back
+          </Button>
+        </div>
+        <Card hover={false}>
+          <div className="prose prose-slate max-w-none">
+            <ReactMarkdown>{viewing.content}</ReactMarkdown>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => handleCopy(viewing.content)}
+              icon={copied ? <Check size={18} /> : <Copy size={18} />}
+              className="flex-1"
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => handleExportPDF(viewing.content, viewing.title)}
+              icon={<Download size={18} />}
+              className="flex-1"
+            >
+              Export PDF
+            </Button>
+          </div>
+        </Card>
+      </motion.div>
+    )
   }
 
   if (showForm || isGenerating || generatedContent) {
@@ -179,7 +239,7 @@ export default function AssessmentsPage() {
         className="space-y-6"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-slate-800">Create Assessment</h2>
+          <h2 className="text-2xl font-bold text-slate-800">Create Scheme of Work</h2>
           {!isGenerating && (
             <Button variant="ghost" onClick={() => { setShowForm(false); setGeneratedContent('') }}>
               Cancel
@@ -197,14 +257,6 @@ export default function AssessmentsPage() {
               onSubmit={handleSubmit}
               className="space-y-5"
             >
-              <Input
-                label="Topic to Assess"
-                placeholder="e.g., Addition and Subtraction"
-                value={formData.topic}
-                onChange={(e) => setFormData({ ...formData, topic: e.target.value })}
-                required
-              />
-
               <Select
                 label="Subject"
                 options={SUBJECTS}
@@ -223,29 +275,33 @@ export default function AssessmentsPage() {
                 required
               />
 
+              <Input
+                label="Grade / Class / Year"
+                placeholder="e.g., Primary 4, JSS 2, SS 1"
+                value={formData.grade}
+                onChange={(e) => setFormData({ ...formData, grade: e.target.value })}
+                required
+              />
+
               <Select
-                label="Assessment Type"
-                options={ASSESSMENT_TYPES}
-                value={formData.assessmentType}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    assessmentType: e.target.value as 'quiz' | 'test' | 'worksheet',
-                  })
-                }
+                label="Term"
+                options={TERMS}
+                value={formData.term}
+                onChange={(e) => setFormData({ ...formData, term: e.target.value as Term })}
               />
 
               <Input
-                label="Number of Questions"
+                label="Number of Weeks"
                 type="number"
-                min="5"
-                max="30"
-                value={formData.questionCount}
-                onChange={(e) => setFormData({ ...formData, questionCount: e.target.value })}
+                min="4"
+                max="14"
+                value={formData.weekCount}
+                onChange={(e) => setFormData({ ...formData, weekCount: e.target.value })}
+                helpText="Most African school terms run 10-13 weeks"
               />
 
               <Button type="submit" className="w-full" size="lg" icon={<Sparkles size={20} />}>
-                Generate Assessment
+                Generate Scheme of Work
               </Button>
             </motion.form>
           )}
@@ -259,12 +315,12 @@ export default function AssessmentsPage() {
               <Card hover={false}>
                 {isGenerating && (
                   <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 rounded-2xl bg-pink-50 flex items-center justify-center">
-                      <span className="loading loading-dots loading-md text-pink-500" />
+                    <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center">
+                      <span className="loading loading-dots loading-md text-indigo-500" />
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-800">Creating your assessment...</p>
-                      <p className="text-sm text-slate-500">This may take a moment</p>
+                      <p className="font-semibold text-slate-800">Building your scheme of work...</p>
+                      <p className="text-sm text-slate-500">This can take a minute for full terms</p>
                     </div>
                   </div>
                 )}
@@ -290,7 +346,12 @@ export default function AssessmentsPage() {
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => handleExportPDF(generatedContent, formData.topic || 'Assessment')}
+                        onClick={() =>
+                          handleExportPDF(
+                            generatedContent,
+                            `${formData.grade} ${formData.subject} Scheme`,
+                          )
+                        }
                         icon={<Download size={18} />}
                         className="flex-1"
                       >
@@ -299,7 +360,7 @@ export default function AssessmentsPage() {
                     </div>
                     <div className="mt-4">
                       <Button onClick={handleReset} className="w-full" icon={<Plus size={20} />}>
-                        Create Another Assessment
+                        Create Another Scheme
                       </Button>
                     </div>
                   </>
@@ -319,12 +380,12 @@ export default function AssessmentsPage() {
       className="space-y-6"
     >
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-2xl icon-pink flex items-center justify-center">
-          <ClipboardCheck size={24} />
+        <div className="w-12 h-12 rounded-2xl icon-indigo flex items-center justify-center">
+          <CalendarRange size={24} />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Assessments</h2>
-          <p className="text-sm text-slate-500">Quizzes, tests & worksheets</p>
+          <h2 className="text-2xl font-bold text-slate-800">Scheme of Work</h2>
+          <p className="text-sm text-slate-500">Plan a whole term, week by week</p>
         </div>
       </div>
 
@@ -334,36 +395,49 @@ export default function AssessmentsPage() {
         size="lg"
         icon={<Plus size={20} />}
       >
-        Create New Assessment
+        Create New Scheme
       </Button>
 
-      {assessments?.length === 0 && (
+      {schemes?.length === 0 && (
         <Card className="text-center py-12" hover={false}>
           <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
-            <ClipboardCheck size={32} className="text-slate-400" />
+            <CalendarRange size={32} className="text-slate-400" />
           </div>
-          <p className="text-lg font-medium text-slate-600">No assessments yet</p>
-          <p className="text-slate-400 mt-1">Create quizzes and tests for your students!</p>
+          <p className="text-lg font-medium text-slate-600">No schemes yet</p>
+          <p className="text-slate-400 mt-1">Map out a full term in one go!</p>
         </Card>
       )}
 
       <div className="space-y-4">
-        {assessments?.map((assessment, index) => (
-          <Card key={assessment.id} delay={index}>
+        {schemes?.map((scheme, index) => (
+          <Card key={scheme.id} delay={index}>
             <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <h3 className="font-semibold text-slate-800 text-lg">{assessment.title}</h3>
-                <p className="text-sm text-slate-500 mt-1 capitalize">{assessment.type}</p>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-slate-800 text-lg truncate">{scheme.title}</h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  {scheme.weekCount} weeks &bull; {scheme.grade}
+                </p>
               </div>
-              <motion.button
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                onClick={() => handleDelete(assessment.id)}
-                className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-500 transition-colors"
-                aria-label="Delete assessment"
-              >
-                <Trash2 size={18} />
-              </motion.button>
+              <div className="flex gap-2">
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => setViewing(scheme)}
+                  className="p-2 rounded-xl bg-indigo-50 text-indigo-500 hover:bg-indigo-100 transition-colors"
+                  aria-label="View scheme"
+                >
+                  <Eye size={18} />
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => handleDelete(scheme.id)}
+                  className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-500 transition-colors"
+                  aria-label="Delete scheme"
+                >
+                  <Trash2 size={18} />
+                </motion.button>
+              </div>
             </div>
           </Card>
         ))}

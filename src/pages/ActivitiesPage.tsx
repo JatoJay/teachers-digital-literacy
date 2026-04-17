@@ -5,6 +5,7 @@ import { Lightbulb, Plus, Trash2, Sparkles, Copy, Download, Check } from 'lucide
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select } from '../components/ui'
 import { useModel } from '../hooks/useModel'
+import { useLocalContext } from '../hooks/useLocalContext'
 import { buildActivityPrompt } from '../lib/prompts/lesson-plan'
 import { getActivities, saveActivity, db } from '../lib/db'
 import type { EducationLevel, Subject, Activity } from '../types'
@@ -45,6 +46,7 @@ export default function ActivitiesPage() {
   })
 
   const activities = useLiveQuery(() => getActivities(), [])
+  const localContext = useLocalContext()
   const [copied, setCopied] = useState(false)
   const bufferRef = useRef('')
   const rafRef = useRef<number | null>(null)
@@ -119,6 +121,7 @@ export default function ActivitiesPage() {
         level: formData.level as EducationLevel,
         activityType: formData.activityType,
         duration: parseInt(formData.duration),
+        localContext,
       })
 
       await generate(prompt, (token: string) => {

@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useModel } from './useModel'
 import { buildLessonPlanPrompt } from '../lib/prompts/lesson-plan'
 import { saveLessonPlan } from '../lib/db'
-import type { EducationLevel, Subject, LessonPlan } from '../types'
+import type { EducationLevel, LocalContext, Subject, LessonPlan } from '../types'
 
 const SECTION_REGEX_CACHE = new Map<string, RegExp>()
 const TEXT_SECTION_REGEX_CACHE = new Map<string, RegExp>()
@@ -15,6 +15,7 @@ interface GeneratorInput {
   grade: string
   duration: number
   additionalContext?: string
+  localContext?: LocalContext
 }
 
 interface GeneratorState {

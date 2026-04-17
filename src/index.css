@@ -167,3 +167,8 @@ input, select, textarea {
   color: var(--color-blue-500);
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.2));
 }
+
+.icon-indigo {
+  color: var(--color-indigo-500);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(99, 102, 241, 0.2));
+}

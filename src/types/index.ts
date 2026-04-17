@@ -67,13 +67,35 @@ export interface AssessmentQuestion {
   points: number
 }
 
+export type Term = 'first' | 'second' | 'third'
+
+export interface SchemeOfWork {
+  id: string
+  title: string
+  subject: Subject
+  level: EducationLevel
+  grade: string
+  term: Term
+  weekCount: number
+  content: string
+  createdAt: Date
+}
+
 export interface AppSettings {
   language: 'en' | 'fr' | 'sw' | 'ha' | 'yo' | 'ig' | 'ar'
   theme: 'light' | 'dark' | 'system'
   educationLevel: EducationLevel
   country?: string
+  region?: string
+  localLanguage?: string
   modelDownloaded: boolean
   modelDownloadProgress: number
+}
+
+export interface LocalContext {
+  country?: string
+  region?: string
+  localLanguage?: string
 }
 
 export interface GenerationState {

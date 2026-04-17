@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { Settings, Download, CheckCircle, AlertCircle, Globe, Palette, GraduationCap } from 'lucide-react'
-import { Button, Card, Select } from '../components/ui'
+import { Settings, Download, CheckCircle, AlertCircle, Globe, Palette, GraduationCap, MapPin } from 'lucide-react'
+import { Button, Card, Input, Select } from '../components/ui'
 import { useModel } from '../hooks/useModel'
 import { getSettings, saveSettings } from '../lib/db'
+import { COUNTRY_PRESETS, getCountryPreset } from '../lib/local-context'
 import type { AppSettings, EducationLevel } from '../types'
 
 const LANGUAGES = [
@@ -28,6 +29,8 @@ const THEMES = [
   { value: 'dark', label: 'Dark Mode' },
 ]
 
+const COUNTRY_OPTIONS = COUNTRY_PRESETS.map((c) => ({ value: c.code, label: c.name }))
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const { isReady, status, progress, error, retry } = useModel()
@@ -43,6 +46,29 @@ export default function SettingsPage() {
     setSettings(updated)
     await saveSettings(updated)
   }
+
+  const handleCountryChange = async (code: string) => {
+    if (!settings) return
+    const preset = getCountryPreset(code)
+    const updated: AppSettings = {
+      ...settings,
+      country: code,
+      localLanguage: preset?.commonLanguages[0] ?? settings.localLanguage,
+    }
+    setSettings(updated)
+    await saveSettings(updated)
+  }
+
+  const languageOptions = useMemo(() => {
+    const preset = getCountryPreset(settings?.country)
+    const langs = preset?.commonLanguages ?? []
+    return [
+      { value: '', label: 'None / English only' },
+      ...langs.map((l) => ({ value: l, label: l })),
+    ]
+  }, [settings?.country])
+
+  const currentPreset = getCountryPreset(settings?.country)
 
   const handleDownloadModel = async () => {
     retry()
@@ -183,7 +209,74 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      <Card title="About KaratuAI" delay={2}>
+      <Card
+        title="Local Context"
+        subtitle="Make AI content culturally relevant"
+        delay={2}
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-2xl icon-teal flex items-center justify-center flex-shrink-0 mt-6">
+              <MapPin size={20} />
+            </div>
+            <div className="flex-1">
+              <Select
+                label="Country"
+                options={COUNTRY_OPTIONS}
+                value={settings.country ?? ''}
+                onChange={(e) => handleCountryChange(e.target.value)}
+                helpText="AI will use local examples, currency, and exam boards"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-2xl icon-blue flex items-center justify-center flex-shrink-0 mt-6">
+              <MapPin size={20} />
+            </div>
+            <div className="flex-1">
+              <Input
+                label="Region or State (optional)"
+                placeholder="e.g., Lagos, Nairobi, Western Cape"
+                value={settings.region ?? ''}
+                onChange={(e) => handleChange('region', e.target.value)}
+              />
+            </div>
+          </div>
+
+          {currentPreset && (
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl icon-amber flex items-center justify-center flex-shrink-0 mt-6">
+                <Globe size={20} />
+              </div>
+              <div className="flex-1">
+                <Select
+                  label="Local Language for Examples"
+                  options={languageOptions}
+                  value={settings.localLanguage ?? ''}
+                  onChange={(e) => handleChange('localLanguage', e.target.value)}
+                  helpText="Used for greetings and examples in lesson plans"
+                />
+              </div>
+            </div>
+          )}
+
+          {currentPreset && (
+            <div className="p-4 bg-teal-50 rounded-2xl text-sm text-teal-700 leading-relaxed">
+              <p className="font-medium">
+                Money examples will use {currentPreset.currency.name} ({currentPreset.currency.symbol})
+              </p>
+              {currentPreset.examBoards && currentPreset.examBoards.length > 0 && (
+                <p className="text-teal-600 mt-1">
+                  Assessments aligned with {currentPreset.examBoards.join(', ')}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card title="About KaratuAI" delay={3}>
         <div className="text-slate-500 space-y-3 text-sm leading-relaxed">
           <p className="text-slate-700 font-medium">Version 1.0.0</p>
           <p>

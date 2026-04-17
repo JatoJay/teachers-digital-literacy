@@ -1,4 +1,11 @@
-import type { EducationLevel, Subject } from '../../types'
+import type { EducationLevel, LocalContext, Subject, Term } from '../../types'
+import { buildLocalContextSection } from '../local-context'
+
+const TERM_LABEL: Record<Term, string> = {
+  first: 'First Term',
+  second: 'Second Term',
+  third: 'Third Term',
+}
 
 const LEVEL_CONTEXT: Record<EducationLevel, string> = {
   primary:
@@ -27,6 +34,10 @@ const SUBJECT_NAMES: Record<Subject, string> = {
   other: 'General Subject',
 }
 
+function withSection(section: string): string {
+  return section ? `\n\n${section}\n` : ''
+}
+
 export function buildLessonPlanPrompt(params: {
   topic: string
   subject: Subject
@@ -34,11 +45,13 @@ export function buildLessonPlanPrompt(params: {
   grade: string
   duration: number
   additionalContext?: string
+  localContext?: LocalContext
 }): string {
-  const { topic, subject, level, grade, duration, additionalContext } = params
+  const { topic, subject, level, grade, duration, additionalContext, localContext } = params
+  const localSection = buildLocalContextSection(localContext)
 
   return `You are an experienced African teacher helping create lesson plans. Create a detailed, practical lesson plan.
-
+${withSection(localSection)}
 CONTEXT:
 - Subject: ${SUBJECT_NAMES[subject]}
 - Education Level: ${LEVEL_CONTEXT[level]}
@@ -62,7 +75,7 @@ Create a lesson plan with these sections:
 - Step-by-step teaching instructions
 - Include student activities
 - Questions to ask students
-- Examples relevant to African context
+- Examples relevant to the local context above
 
 5. CONCLUSION (${Math.round(duration * 0.15)} mins)
 - Summary of key points
@@ -75,7 +88,7 @@ Create a lesson plan with these sections:
 
 7. HOMEWORK (optional but recommended)
 
-Format the response clearly with headers. Use simple, clear language. Include culturally relevant examples from African daily life, history, and environment.`
+Format the response clearly with headers. Use simple, clear language. Ground all examples in the local context above.`
 }
 
 export function buildActivityPrompt(params: {
@@ -84,12 +97,14 @@ export function buildActivityPrompt(params: {
   level: EducationLevel
   activityType: 'individual' | 'group' | 'class'
   duration: number
+  localContext?: LocalContext
 }): string {
-  const { topic, subject, level, activityType, duration } = params
+  const { topic, subject, level, activityType, duration, localContext } = params
   const levelDesc = level === 'primary' ? 'primary school' : level === 'secondary' ? 'secondary school' : 'university'
+  const localSection = buildLocalContextSection(localContext)
 
   return `Create a ${duration}-minute ${activityType} activity about "${topic}" for ${levelDesc} ${SUBJECT_NAMES[subject]} students.
-
+${withSection(localSection)}
 ## Activity Title
 Write a catchy title here.
 
@@ -104,7 +119,7 @@ List 3-5 simple materials available in African schools.
 ## What Students Will Learn
 Describe the learning outcomes.
 
-Keep it simple, hands-on, and use African examples.`
+Keep it simple and hands-on. Ground every example in the local context above.`
 }
 
 export function buildAssessmentPrompt(params: {
@@ -113,12 +128,14 @@ export function buildAssessmentPrompt(params: {
   level: EducationLevel
   assessmentType: 'quiz' | 'test' | 'worksheet'
   questionCount: number
+  localContext?: LocalContext
 }): string {
-  const { topic, subject, level, assessmentType, questionCount } = params
+  const { topic, subject, level, assessmentType, questionCount, localContext } = params
   const levelDesc = level === 'primary' ? 'primary school' : level === 'secondary' ? 'secondary school' : 'university'
+  const localSection = buildLocalContextSection(localContext)
 
   return `Create a ${assessmentType} with ${questionCount} questions about "${topic}" for ${levelDesc} ${SUBJECT_NAMES[subject]} students.
-
+${withSection(localSection)}
 ## ${topic} - ${assessmentType.charAt(0).toUpperCase() + assessmentType.slice(1)}
 
 **Question 1** (Multiple Choice)
@@ -137,5 +154,35 @@ Write a statement here.
 Write a question here.
 **Answer: Write the expected answer.**
 
-Continue with ${questionCount - 3} more questions. Use African examples. Mix question types.`
+Continue with ${questionCount - 3} more questions. Mix question types. Ground every example in the local context above.`
+}
+
+export function buildSchemePrompt(params: {
+  subject: Subject
+  level: EducationLevel
+  grade: string
+  term: Term
+  weekCount: number
+  localContext?: LocalContext
+}): string {
+  const { subject, level, grade, term, weekCount, localContext } = params
+  const localSection = buildLocalContextSection(localContext)
+
+  return `You are an experienced African curriculum planner. Build a ${weekCount}-week scheme of work for ${SUBJECT_NAMES[subject]}, ${grade} (${LEVEL_CONTEXT[level].split('.')[0]}), ${TERM_LABEL[term]}.
+${withSection(localSection)}
+Produce a markdown table of contents, then for each week use this structure:
+
+## Week {n}: {Topic}
+- **Learning Objectives**: 2-3 measurable objectives starting with action verbs
+- **Sub-topics**: comma-separated list
+- **Teaching Activities**: 2-3 concrete classroom activities
+- **Materials**: simple, locally-available items
+- **Assessment**: how the teacher checks understanding this week
+
+Rules:
+- Sequence topics so each week builds on the last
+- Keep language simple and practical for African classrooms
+- Ground examples in the local context above (currency, foods, names, landmarks)
+- For exam-board terms (final term), include a revision week and a mock-exam week
+- Output exactly ${weekCount} weeks. No extra commentary.`
 }

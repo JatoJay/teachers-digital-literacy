@@ -7,6 +7,7 @@ import Layout from './components/layout/Layout'
 const LessonPlannerPage = lazy(() => import('./pages/LessonPlannerPage'))
 const ActivitiesPage = lazy(() => import('./pages/ActivitiesPage'))
 const AssessmentsPage = lazy(() => import('./pages/AssessmentsPage'))
+const SchemeOfWorkPage = lazy(() => import('./pages/SchemeOfWorkPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
               <Route index element={<LessonPlannerPage />} />
               <Route path="activities" element={<ActivitiesPage />} />
               <Route path="assessments" element={<AssessmentsPage />} />
+              <Route path="scheme" element={<SchemeOfWorkPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>
