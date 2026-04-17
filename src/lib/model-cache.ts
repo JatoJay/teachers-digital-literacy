@@ -1,6 +1,18 @@
-const CACHE_NAME = 'karatuai-model-cache-v1'
+const CACHE_NAME = 'karatuai-model-cache-v2'
+const LEGACY_CACHE_NAMES = ['karatuai-model-cache-v1']
 const MODEL_URL = 'https://storage.googleapis.com/karatuai-models/gemma-4-E2B-it-web.task'
-const MIN_VALID_SIZE = 1_500_000_000
+const EXPECTED_SIZE = 2_003_697_664
+
+async function evictLegacyCaches(): Promise<void> {
+  if (!('caches' in window)) return
+  await Promise.all(
+    LEGACY_CACHE_NAMES.map((name) => caches.delete(name).catch(() => undefined)),
+  )
+}
+
+function isValidSize(size: number): boolean {
+  return size === EXPECTED_SIZE
+}
 
 async function readCachedBlob(cache: Cache): Promise<Blob | null> {
   const cached = await cache.match(MODEL_URL)
@@ -8,8 +20,8 @@ async function readCachedBlob(cache: Cache): Promise<Blob | null> {
 
   try {
     const blob = await cached.blob()
-    if (blob.size < MIN_VALID_SIZE) {
-      console.warn(`Cached model invalid (${blob.size} bytes), evicting`)
+    if (!isValidSize(blob.size)) {
+      console.warn(`Cached model invalid (${blob.size} bytes, expected ${EXPECTED_SIZE}), evicting`)
       await cache.delete(MODEL_URL)
       return null
     }
@@ -54,8 +66,8 @@ async function downloadModel(
   }
 
   const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' })
-  if (blob.size < MIN_VALID_SIZE) {
-    throw new Error(`Downloaded model is too small (${blob.size} bytes) — likely truncated`)
+  if (!isValidSize(blob.size)) {
+    throw new Error(`Downloaded model size mismatch (${blob.size} bytes, expected ${EXPECTED_SIZE}) — likely truncated`)
   }
   return blob
 }
@@ -80,6 +92,7 @@ export async function getCachedModelUrl(
     return URL.createObjectURL(blob)
   }
 
+  await evictLegacyCaches()
   const cache = await caches.open(CACHE_NAME)
 
   const cached = await readCachedBlob(cache)
@@ -101,9 +114,9 @@ export async function isModelCached(): Promise<boolean> {
     const cached = await cache.match(MODEL_URL)
     if (!cached) return false
     const len = parseInt(cached.headers.get('content-length') ?? '0', 10)
-    if (len > 0) return len >= MIN_VALID_SIZE
+    if (len > 0) return isValidSize(len)
     const blob = await cached.blob()
-    return blob.size >= MIN_VALID_SIZE
+    return isValidSize(blob.size)
   } catch {
     return false
   }
