@@ -8,6 +8,7 @@ import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
 import { buildActivityPrompt } from '../lib/prompts/lesson-plan'
 import { getActivities, saveActivity, db } from '../lib/db'
+import { exportAsPDF } from '../lib/print'
 import type { EducationLevel, Subject, Activity } from '../types'
 
 const SUBJECTS: { value: Subject; label: string }[] = [
@@ -76,28 +77,7 @@ export default function ActivitiesPage() {
   }
 
   const handleExportPDF = (content: string, title: string) => {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title} - Activity</title>
-          <style>
-            body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1, h2 { color: #d97706; }
-            strong { color: #334155; }
-          </style>
-        </head>
-        <body>
-          <h1>${title}</h1>
-          ${content.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}
-          <p style="margin-top:40px;color:#94a3b8;text-align:center;">Created with KaratuAI</p>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-    printWindow.print()
+    exportAsPDF({ title, content, documentType: 'activity' })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

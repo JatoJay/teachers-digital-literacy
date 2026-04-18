@@ -8,6 +8,7 @@ import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
 import { buildSchemePrompt } from '../lib/prompts/lesson-plan'
 import { getSchemes, saveScheme, deleteScheme } from '../lib/db'
+import { exportAsPDF } from '../lib/print'
 import type { EducationLevel, Subject, Term, SchemeOfWork } from '../types'
 
 const SUBJECTS: { value: Subject; label: string }[] = [
@@ -84,30 +85,7 @@ export default function SchemeOfWorkPage() {
   }
 
   const handleExportPDF = (content: string, title: string) => {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title} - Scheme of Work</title>
-          <style>
-            body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1 { color: #6366f1; border-bottom: 2px solid #e0e7ff; padding-bottom: 8px; }
-            h2 { color: #4f46e5; margin-top: 28px; }
-            strong { color: #334155; }
-            ul { padding-left: 20px; }
-          </style>
-        </head>
-        <body>
-          <h1>${title}</h1>
-          ${content.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}
-          <p style="margin-top:40px;color:#94a3b8;text-align:center;">Created with KaratuAI</p>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-    printWindow.print()
+    exportAsPDF({ title, content, documentType: 'scheme' })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {

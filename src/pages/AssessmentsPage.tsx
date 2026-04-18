@@ -8,6 +8,7 @@ import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
 import { buildAssessmentPrompt } from '../lib/prompts/lesson-plan'
 import { getAssessments, saveAssessment, db } from '../lib/db'
+import { exportAsPDF } from '../lib/print'
 import type { EducationLevel, Subject, Assessment } from '../types'
 
 const SUBJECTS: { value: Subject; label: string }[] = [
@@ -74,28 +75,7 @@ export default function AssessmentsPage() {
   }
 
   const handleExportPDF = (content: string, title: string) => {
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${title} - Assessment</title>
-          <style>
-            body { font-family: 'Segoe UI', sans-serif; line-height: 1.6; padding: 40px; max-width: 800px; margin: 0 auto; }
-            h1, h2 { color: #0d9488; }
-            strong { color: #334155; }
-          </style>
-        </head>
-        <body>
-          <h1>${title}</h1>
-          ${content.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}
-          <p style="margin-top:40px;color:#94a3b8;text-align:center;">Created with KaratuAI</p>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-    printWindow.print()
+    exportAsPDF({ title, content, documentType: 'assessment' })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
