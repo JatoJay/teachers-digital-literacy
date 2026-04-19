@@ -1,14 +1,28 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CalendarRange, Plus, Trash2, Sparkles, Copy, Download, Check, Eye } from 'lucide-react'
+import {
+  CalendarRange,
+  Plus,
+  Trash2,
+  Sparkles,
+  Copy,
+  Download,
+  Check,
+  Eye,
+  BookOpen,
+  ArrowRight,
+  FileText,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select } from '../components/ui'
 import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
 import { buildSchemePrompt } from '../lib/prompts/lesson-plan'
-import { getSchemes, saveScheme, deleteScheme } from '../lib/db'
+import { getSchemes, saveScheme, deleteScheme, getLessonsBySchemeId } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
+import { parseSchemeWeeks } from '../lib/scheme-parser'
 import type { EducationLevel, Subject, Term, SchemeOfWork } from '../types'
 
 const SUBJECTS: { value: Subject; label: string }[] = [
@@ -42,11 +56,13 @@ const TERMS: { value: Term; label: string }[] = [
 ]
 
 export default function SchemeOfWorkPage() {
+  const navigate = useNavigate()
   const { generate, isReady } = useModel()
   const [showForm, setShowForm] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedContent, setGeneratedContent] = useState('')
   const [viewing, setViewing] = useState<SchemeOfWork | null>(null)
+  const [showRawMarkdown, setShowRawMarkdown] = useState(false)
   const [formData, setFormData] = useState({
     subject: '' as Subject | '',
     level: '' as EducationLevel | '',
@@ -171,41 +187,36 @@ export default function SchemeOfWorkPage() {
 
   if (viewing) {
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="space-y-6"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-slate-800 truncate pr-3">{viewing.title}</h2>
-          <Button variant="ghost" onClick={() => setViewing(null)}>
-            Back
-          </Button>
-        </div>
-        <Card hover={false}>
-          <div className="prose prose-slate max-w-none">
-            <ReactMarkdown>{viewing.content}</ReactMarkdown>
-          </div>
-          <div className="mt-6 flex gap-3">
-            <Button
-              variant="outline"
-              onClick={() => handleCopy(viewing.content)}
-              icon={copied ? <Check size={18} /> : <Copy size={18} />}
-              className="flex-1"
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => handleExportPDF(viewing.content, viewing.title)}
-              icon={<Download size={18} />}
-              className="flex-1"
-            >
-              Export PDF
-            </Button>
-          </div>
-        </Card>
-      </motion.div>
+      <SchemeDetailView
+        scheme={viewing}
+        showRawMarkdown={showRawMarkdown}
+        copied={copied}
+        onBack={() => {
+          setViewing(null)
+          setShowRawMarkdown(false)
+        }}
+        onToggleRaw={() => setShowRawMarkdown((prev) => !prev)}
+        onCopy={handleCopy}
+        onExportPDF={handleExportPDF}
+        onCreateLessonForWeek={(week) => {
+          navigate('/', {
+            state: {
+              prefill: {
+                topic: week.topic,
+                subject: viewing.subject,
+                level: viewing.level,
+                grade: viewing.grade,
+                schemeId: viewing.id,
+                weekNumber: week.number,
+                weekTopic: week.topic,
+              },
+            },
+          })
+        }}
+        onOpenLesson={(lessonId) => {
+          navigate('/', { state: { openLessonId: lessonId } })
+        }}
+      />
     )
   }
 
@@ -419,6 +430,151 @@ export default function SchemeOfWorkPage() {
             </div>
           </Card>
         ))}
+      </div>
+    </motion.div>
+  )
+}
+
+interface SchemeDetailViewProps {
+  scheme: SchemeOfWork
+  showRawMarkdown: boolean
+  copied: boolean
+  onBack: () => void
+  onToggleRaw: () => void
+  onCopy: (content: string) => void
+  onExportPDF: (content: string, title: string) => void
+  onCreateLessonForWeek: (week: { number: number; topic: string }) => void
+  onOpenLesson: (lessonId: string) => void
+}
+
+function SchemeDetailView({
+  scheme,
+  showRawMarkdown,
+  copied,
+  onBack,
+  onToggleRaw,
+  onCopy,
+  onExportPDF,
+  onCreateLessonForWeek,
+  onOpenLesson,
+}: SchemeDetailViewProps) {
+  const weeks = parseSchemeWeeks(scheme.content)
+  const lessons = useLiveQuery(() => getLessonsBySchemeId(scheme.id), [scheme.id]) ?? []
+  const lessonsByWeek = new Map<number, typeof lessons>()
+  for (const lesson of lessons) {
+    if (lesson.weekNumber === undefined) continue
+    const existing = lessonsByWeek.get(lesson.weekNumber)
+    if (existing) {
+      existing.push(lesson)
+    } else {
+      lessonsByWeek.set(lesson.weekNumber, [lesson])
+    }
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-2xl font-bold text-slate-800 truncate pr-3">{scheme.title}</h2>
+        <Button variant="ghost" onClick={onBack}>
+          Back
+        </Button>
+      </div>
+
+      <Card hover={false} className="bg-indigo-50/40 border-indigo-100">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+            <CalendarRange size={20} />
+          </div>
+          <div className="text-sm text-slate-600 leading-relaxed">
+            <p className="font-medium text-slate-800 mb-1">
+              {weeks.length > 0
+                ? `Tap a week below to spawn a lesson plan pre-filled from that week's topic.`
+                : `We could not parse the weekly breakdown automatically. View the raw scheme below or regenerate it.`}
+            </p>
+            <p>
+              {scheme.weekCount} weeks &bull; {scheme.grade}
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {weeks.length > 0 && !showRawMarkdown && (
+        <div className="space-y-3">
+          {weeks.map((week) => {
+            const weekLessons = lessonsByWeek.get(week.number) ?? []
+            return (
+              <Card key={week.number} hover={false}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+                      Week {week.number}
+                    </p>
+                    <h3 className="font-semibold text-slate-800 text-base mt-1">{week.topic}</h3>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => onCreateLessonForWeek(week)}
+                    icon={<BookOpen size={16} />}
+                  >
+                    Create Lesson
+                  </Button>
+                </div>
+                {weekLessons.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                      Saved lessons
+                    </p>
+                    {weekLessons.map((lesson) => (
+                      <button
+                        key={lesson.id}
+                        onClick={() => onOpenLesson(lesson.id)}
+                        className="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-slate-50 hover:bg-teal-50 transition-colors text-left"
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <FileText size={14} className="text-teal-500 shrink-0" />
+                          <span className="text-sm text-slate-700 truncate">{lesson.title}</span>
+                        </span>
+                        <ArrowRight size={14} className="text-slate-400 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {(showRawMarkdown || weeks.length === 0) && (
+        <Card hover={false}>
+          <div className="prose prose-slate max-w-none">
+            <ReactMarkdown>{scheme.content}</ReactMarkdown>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        {weeks.length > 0 && (
+          <Button variant="outline" onClick={onToggleRaw} className="flex-1 min-w-[140px]">
+            {showRawMarkdown ? 'Show Weeks' : 'Show Raw Scheme'}
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          onClick={() => onCopy(scheme.content)}
+          icon={copied ? <Check size={18} /> : <Copy size={18} />}
+          className="flex-1 min-w-[140px]"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => onExportPDF(scheme.content, scheme.title)}
+          icon={<Download size={18} />}
+          className="flex-1 min-w-[140px]"
+        >
+          Export PDF
+        </Button>
       </div>
     </motion.div>
   )

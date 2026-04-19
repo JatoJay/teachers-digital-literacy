@@ -1,14 +1,44 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { BookOpen, Plus, Trash2, Eye, ArrowLeft, Sparkles, Copy, Download, Check } from 'lucide-react'
+import {
+  BookOpen,
+  Plus,
+  Trash2,
+  Eye,
+  ArrowLeft,
+  Sparkles,
+  Copy,
+  Download,
+  Check,
+  CalendarRange,
+  Lightbulb,
+  ClipboardCheck,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select, TextArea } from '../components/ui'
 import { useLessonGenerator } from '../hooks/useLessonGenerator'
 import { useLocalContext } from '../hooks/useLocalContext'
-import { getLessonPlans, deleteLessonPlan } from '../lib/db'
+import {
+  getLessonPlans,
+  deleteLessonPlan,
+  getActivitiesByLessonId,
+  getAssessmentsByLessonId,
+  getScheme,
+} from '../lib/db'
 import { exportAsPDF } from '../lib/print'
-import type { EducationLevel, Subject } from '../types'
+import type { EducationLevel, Subject, LessonPlan } from '../types'
+
+interface LessonPrefill {
+  topic?: string
+  subject?: Subject
+  level?: EducationLevel
+  grade?: string
+  schemeId?: string
+  weekNumber?: number
+  weekTopic?: string
+}
 
 const SUBJECTS: { value: Subject; label: string }[] = [
   { value: 'mathematics', label: 'Mathematics' },
@@ -49,27 +79,59 @@ const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   day: 'numeric',
 })
 
+type LessonNavState = { prefill?: LessonPrefill; openLessonId?: string } | null
+
 export default function LessonPlannerPage() {
-  const [showForm, setShowForm] = useState(false)
-  const [viewingPlan, setViewingPlan] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    topic: '',
-    subject: '' as Subject | '',
-    level: '' as EducationLevel | '',
-    grade: '',
-    duration: '45',
-    additionalContext: '',
+  const location = useLocation()
+  const navigate = useNavigate()
+  const navStateOnMount = useState<LessonNavState>(
+    () => (location.state as LessonNavState) ?? null,
+  )[0]
+
+  const [showForm, setShowForm] = useState(
+    Boolean(navStateOnMount?.prefill && !navStateOnMount?.openLessonId),
+  )
+  const [viewingPlan, setViewingPlan] = useState<string | null>(
+    navStateOnMount?.openLessonId ?? null,
+  )
+  const [formData, setFormData] = useState(() => {
+    const p = navStateOnMount?.prefill
+    return {
+      topic: p?.topic ?? '',
+      subject: (p?.subject ?? '') as Subject | '',
+      level: (p?.level ?? '') as EducationLevel | '',
+      grade: p?.grade ?? '',
+      duration: '45',
+      additionalContext: '',
+    }
   })
+  const [parentScheme, setParentScheme] = useState<{
+    schemeId: string
+    weekNumber?: number
+    weekTopic?: string
+  } | null>(() => {
+    const p = navStateOnMount?.prefill
+    if (!p?.schemeId) return null
+    return { schemeId: p.schemeId, weekNumber: p.weekNumber, weekTopic: p.weekTopic }
+  })
+  const [lastGeneratedId, setLastGeneratedId] = useState<string | null>(null)
 
   const { isGenerating, streamedContent, error, generate, reset } = useLessonGenerator()
   const lessonPlans = useLiveQuery(() => getLessonPlans(), [])
   const localContext = useLocalContext()
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (location.state) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [location.pathname, location.state, navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.topic || !formData.subject || !formData.level) return
 
-    await generate({
+    const plan = await generate({
       topic: formData.topic,
       subject: formData.subject as Subject,
       level: formData.level as EducationLevel,
@@ -77,7 +139,11 @@ export default function LessonPlannerPage() {
       duration: parseInt(formData.duration),
       additionalContext: formData.additionalContext,
       localContext,
+      schemeId: parentScheme?.schemeId,
+      weekNumber: parentScheme?.weekNumber,
+      weekTopic: parentScheme?.weekTopic,
     })
+    if (plan) setLastGeneratedId(plan.id)
   }
 
   const handleDelete = async (id: string) => {
@@ -86,11 +152,11 @@ export default function LessonPlannerPage() {
     }
   }
 
-  const [copied, setCopied] = useState(false)
-
   const handleNewPlan = () => {
     setShowForm(true)
     setViewingPlan(null)
+    setParentScheme(null)
+    setLastGeneratedId(null)
     reset()
     setFormData({
       topic: '',
@@ -100,6 +166,22 @@ export default function LessonPlannerPage() {
       duration: '45',
       additionalContext: '',
     })
+  }
+
+  const buildChildPrefill = (plan: LessonPlan) => ({
+    topic: plan.title,
+    subject: plan.subject,
+    level: plan.level,
+    lessonId: plan.id,
+    schemeId: plan.schemeId,
+  })
+
+  const handleSpawnActivity = (plan: LessonPlan) => {
+    navigate('/activities', { state: { prefill: buildChildPrefill(plan) } })
+  }
+
+  const handleSpawnAssessment = (plan: LessonPlan) => {
+    navigate('/assessments', { state: { prefill: buildChildPrefill(plan) } })
   }
 
   const handleCopy = async (content: string) => {
@@ -128,51 +210,12 @@ export default function LessonPlannerPage() {
     if (!plan) return null
 
     return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="space-y-6"
-      >
-        <Button variant="ghost" onClick={() => setViewingPlan(null)} icon={<ArrowLeft size={20} />}>
-          Back
-        </Button>
-        <Card title={plan.title} subtitle={`${plan.grade} | ${plan.duration} minutes`} hover={false}>
-          <div className="prose prose-slate max-w-none">
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Learning Objectives</h3>
-            <ul className="space-y-1">
-              {plan.objectives.map((obj, i) => (
-                <li key={i} className="text-slate-600">{obj}</li>
-              ))}
-            </ul>
-
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Materials Needed</h3>
-            <ul className="space-y-1">
-              {plan.materials.map((mat, i) => (
-                <li key={i} className="text-slate-600">{mat}</li>
-              ))}
-            </ul>
-
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Introduction</h3>
-            <p className="text-slate-600 leading-relaxed">{plan.introduction}</p>
-
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Main Activity</h3>
-            <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{plan.mainActivity}</p>
-
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Conclusion</h3>
-            <p className="text-slate-600 leading-relaxed">{plan.conclusion}</p>
-
-            <h3 className="text-lg font-bold text-slate-800 mt-6">Assessment</h3>
-            <p className="text-slate-600 leading-relaxed">{plan.assessment}</p>
-
-            {plan.homework && (
-              <>
-                <h3 className="text-lg font-bold text-slate-800 mt-6">Homework</h3>
-                <p className="text-slate-600 leading-relaxed">{plan.homework}</p>
-              </>
-            )}
-          </div>
-        </Card>
-      </motion.div>
+      <LessonDetailView
+        plan={plan}
+        onBack={() => setViewingPlan(null)}
+        onSpawnActivity={() => handleSpawnActivity(plan)}
+        onSpawnAssessment={() => handleSpawnAssessment(plan)}
+      />
     )
   }
 
@@ -186,11 +229,45 @@ export default function LessonPlannerPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-slate-800">Create Lesson Plan</h2>
           {!isGenerating && (
-            <Button variant="ghost" onClick={() => setShowForm(false)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowForm(false)
+                setParentScheme(null)
+                setLastGeneratedId(null)
+                reset()
+              }}
+            >
               Cancel
             </Button>
           )}
         </div>
+
+        {parentScheme && !isGenerating && !streamedContent && (
+          <Card hover={false} className="bg-indigo-50/50 border-indigo-100">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                <CalendarRange size={18} />
+              </div>
+              <div className="flex-1 min-w-0 text-sm">
+                <p className="font-semibold text-slate-800">
+                  Spawning from scheme
+                  {parentScheme.weekNumber !== undefined && ` · Week ${parentScheme.weekNumber}`}
+                </p>
+                {parentScheme.weekTopic && (
+                  <p className="text-slate-600 mt-1 truncate">{parentScheme.weekTopic}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setParentScheme(null)}
+                className="text-xs text-slate-500 hover:text-slate-700 underline shrink-0"
+              >
+                Detach
+              </button>
+            </div>
+          </Card>
+        )}
 
         <AnimatePresence mode="wait">
           {!streamedContent && !isGenerating && (
@@ -310,11 +387,45 @@ export default function LessonPlannerPage() {
                         Export PDF
                       </Button>
                     </div>
+                    {lastGeneratedId && (
+                      <div className="mt-4 flex gap-3">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const plan = lessonPlans?.find((p) => p.id === lastGeneratedId)
+                            if (plan) handleSpawnActivity(plan)
+                          }}
+                          icon={<Lightbulb size={18} />}
+                          className="flex-1"
+                        >
+                          Spawn Activity
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            const plan = lessonPlans?.find((p) => p.id === lastGeneratedId)
+                            if (plan) handleSpawnAssessment(plan)
+                          }}
+                          icon={<ClipboardCheck size={18} />}
+                          className="flex-1"
+                        >
+                          Spawn Assessment
+                        </Button>
+                      </div>
+                    )}
                     <div className="mt-4 flex gap-4">
                       <Button onClick={handleNewPlan} className="flex-1" icon={<Plus size={20} />}>
                         Create Another
                       </Button>
-                      <Button variant="outline" onClick={() => setShowForm(false)}>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setShowForm(false)
+                          setParentScheme(null)
+                          setLastGeneratedId(null)
+                          reset()
+                        }}
+                      >
                         View All
                       </Button>
                     </div>
@@ -368,6 +479,12 @@ export default function LessonPlannerPage() {
                   {plan.grade} &bull; {plan.duration} mins &bull;{' '}
                   {DATE_FORMATTER.format(new Date(plan.createdAt))}
                 </p>
+                {plan.schemeId && plan.weekNumber !== undefined && (
+                  <p className="text-xs font-medium text-indigo-500 mt-2 inline-flex items-center gap-1">
+                    <CalendarRange size={12} />
+                    From scheme · Week {plan.weekNumber}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2">
                 <motion.button
@@ -393,6 +510,158 @@ export default function LessonPlannerPage() {
           </Card>
         ))}
       </div>
+    </motion.div>
+  )
+}
+
+interface LessonDetailViewProps {
+  plan: LessonPlan
+  onBack: () => void
+  onSpawnActivity: () => void
+  onSpawnAssessment: () => void
+}
+
+function LessonDetailView({
+  plan,
+  onBack,
+  onSpawnActivity,
+  onSpawnAssessment,
+}: LessonDetailViewProps) {
+  const activities = useLiveQuery(() => getActivitiesByLessonId(plan.id), [plan.id]) ?? []
+  const assessments = useLiveQuery(() => getAssessmentsByLessonId(plan.id), [plan.id]) ?? []
+  const scheme = useLiveQuery(
+    () => (plan.schemeId ? getScheme(plan.schemeId) : undefined),
+    [plan.schemeId],
+  )
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <Button variant="ghost" onClick={onBack} icon={<ArrowLeft size={20} />}>
+        Back
+      </Button>
+
+      {scheme && (
+        <Card hover={false} className="bg-indigo-50/50 border-indigo-100">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+              <CalendarRange size={18} />
+            </div>
+            <div className="flex-1 min-w-0 text-sm">
+              <p className="font-semibold text-slate-800 truncate">{scheme.title}</p>
+              {plan.weekNumber !== undefined && plan.weekTopic && (
+                <p className="text-slate-600 mt-1 truncate">
+                  Week {plan.weekNumber} · {plan.weekTopic}
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <Card title={plan.title} subtitle={`${plan.grade} | ${plan.duration} minutes`} hover={false}>
+        <div className="prose prose-slate max-w-none">
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Learning Objectives</h3>
+          <ul className="space-y-1">
+            {plan.objectives.map((obj, i) => (
+              <li key={i} className="text-slate-600">
+                {obj}
+              </li>
+            ))}
+          </ul>
+
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Materials Needed</h3>
+          <ul className="space-y-1">
+            {plan.materials.map((mat, i) => (
+              <li key={i} className="text-slate-600">
+                {mat}
+              </li>
+            ))}
+          </ul>
+
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Introduction</h3>
+          <p className="text-slate-600 leading-relaxed">{plan.introduction}</p>
+
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Main Activity</h3>
+          <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">{plan.mainActivity}</p>
+
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Conclusion</h3>
+          <p className="text-slate-600 leading-relaxed">{plan.conclusion}</p>
+
+          <h3 className="text-lg font-bold text-slate-800 mt-6">Assessment</h3>
+          <p className="text-slate-600 leading-relaxed">{plan.assessment}</p>
+
+          {plan.homework && (
+            <>
+              <h3 className="text-lg font-bold text-slate-800 mt-6">Homework</h3>
+              <p className="text-slate-600 leading-relaxed">{plan.homework}</p>
+            </>
+          )}
+        </div>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Button
+            variant="outline"
+            onClick={onSpawnActivity}
+            icon={<Lightbulb size={18} />}
+            className="flex-1 min-w-[160px]"
+          >
+            Spawn Activity
+          </Button>
+          <Button
+            variant="outline"
+            onClick={onSpawnAssessment}
+            icon={<ClipboardCheck size={18} />}
+            className="flex-1 min-w-[160px]"
+          >
+            Spawn Assessment
+          </Button>
+        </div>
+      </Card>
+
+      {activities.length > 0 && (
+        <Card hover={false}>
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb size={16} className="text-amber-500" />
+            <h3 className="text-base font-semibold text-slate-800">
+              Activities ({activities.length})
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {activities.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-amber-50/60"
+              >
+                <span className="text-sm text-slate-700 truncate">{a.title}</span>
+                <span className="text-xs text-slate-500 capitalize shrink-0">
+                  {a.type} · {a.duration}m
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {assessments.length > 0 && (
+        <Card hover={false}>
+          <div className="flex items-center gap-2 mb-3">
+            <ClipboardCheck size={16} className="text-pink-500" />
+            <h3 className="text-base font-semibold text-slate-800">
+              Assessments ({assessments.length})
+            </h3>
+          </div>
+          <div className="space-y-2">
+            {assessments.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-pink-50/60"
+              >
+                <span className="text-sm text-slate-700 truncate">{a.title}</span>
+                <span className="text-xs text-slate-500 capitalize shrink-0">{a.type}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </motion.div>
   )
 }

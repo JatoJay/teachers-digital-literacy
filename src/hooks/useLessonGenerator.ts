@@ -16,6 +16,9 @@ interface GeneratorInput {
   duration: number
   additionalContext?: string
   localContext?: LocalContext
+  schemeId?: string
+  weekNumber?: number
+  weekTopic?: string
 }
 
 interface GeneratorState {
@@ -87,6 +90,10 @@ export function useLessonGenerator() {
         conclusion: extractTextSection(content, 'conclusion'),
         assessment: extractTextSection(content, 'assessment'),
         homework: extractTextSection(content, 'homework'),
+        content,
+        schemeId: input.schemeId,
+        weekNumber: input.weekNumber,
+        weekTopic: input.weekTopic,
         createdAt: new Date(),
         updatedAt: new Date(),
       }

@@ -20,6 +20,12 @@ db.version(2).stores({
   schemes: 'id, subject, level, term, createdAt',
 })
 
+db.version(3).stores({
+  lessonPlans: 'id, subject, level, createdAt, schemeId',
+  activities: 'id, subject, level, createdAt, lessonId, schemeId',
+  assessments: 'id, subject, level, createdAt, lessonId, schemeId',
+})
+
 export { db }
 
 export async function getSettings(): Promise<AppSettings> {
@@ -82,4 +88,29 @@ export async function getScheme(id: string) {
 
 export async function deleteScheme(id: string) {
   await db.schemes.delete(id)
+}
+
+export async function getLessonPlan(id: string) {
+  return db.lessonPlans.get(id)
+}
+
+export async function getLessonsBySchemeId(schemeId: string) {
+  const all = await db.lessonPlans.where('schemeId').equals(schemeId).toArray()
+  return all.sort((a, b) => (a.weekNumber ?? 0) - (b.weekNumber ?? 0))
+}
+
+export async function getActivitiesByLessonId(lessonId: string) {
+  return db.activities.where('lessonId').equals(lessonId).reverse().sortBy('createdAt')
+}
+
+export async function getAssessmentsByLessonId(lessonId: string) {
+  return db.assessments.where('lessonId').equals(lessonId).reverse().sortBy('createdAt')
+}
+
+export async function deleteActivity(id: string) {
+  await db.activities.delete(id)
+}
+
+export async function deleteAssessment(id: string) {
+  await db.assessments.delete(id)
 }

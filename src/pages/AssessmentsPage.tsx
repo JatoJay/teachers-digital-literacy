@@ -1,15 +1,34 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ClipboardCheck, Plus, Trash2, Sparkles, Copy, Download, Check, Eye } from 'lucide-react'
+import {
+  ClipboardCheck,
+  Plus,
+  Trash2,
+  Sparkles,
+  Copy,
+  Download,
+  Check,
+  Eye,
+  BookOpen,
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select } from '../components/ui'
 import { useModel } from '../hooks/useModel'
 import { useLocalContext } from '../hooks/useLocalContext'
 import { buildAssessmentPrompt } from '../lib/prompts/lesson-plan'
-import { getAssessments, saveAssessment, db } from '../lib/db'
+import { getAssessments, saveAssessment, getLessonPlans, db } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
 import type { EducationLevel, Subject, Assessment } from '../types'
+
+interface AssessmentPrefill {
+  topic?: string
+  subject?: Subject
+  level?: EducationLevel
+  lessonId?: string
+  schemeId?: string
+}
 
 const SUBJECTS: { value: Subject; label: string }[] = [
   { value: 'mathematics', label: 'Mathematics' },
@@ -31,21 +50,40 @@ const ASSESSMENT_TYPES = [
   { value: 'worksheet', label: 'Practice Worksheet' },
 ]
 
+type AssessmentNavState = { prefill?: AssessmentPrefill } | null
+
 export default function AssessmentsPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const { generate, isReady } = useModel()
-  const [showForm, setShowForm] = useState(false)
+  const navStateOnMount = useState<AssessmentNavState>(
+    () => (location.state as AssessmentNavState) ?? null,
+  )[0]
+  const initialPrefill = navStateOnMount?.prefill
+
+  const [showForm, setShowForm] = useState(Boolean(initialPrefill))
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedContent, setGeneratedContent] = useState('')
   const [viewing, setViewing] = useState<Assessment | null>(null)
-  const [formData, setFormData] = useState({
-    topic: '',
-    subject: '' as Subject | '',
-    level: '' as EducationLevel | '',
+  const [formData, setFormData] = useState(() => ({
+    topic: initialPrefill?.topic ?? '',
+    subject: (initialPrefill?.subject ?? '') as Subject | '',
+    level: (initialPrefill?.level ?? '') as EducationLevel | '',
     assessmentType: 'quiz' as 'quiz' | 'test' | 'worksheet',
     questionCount: '10',
+  }))
+  const [parentLesson, setParentLesson] = useState<{
+    lessonId: string
+    schemeId?: string
+  } | null>(() => {
+    if (!initialPrefill?.lessonId) return null
+    return { lessonId: initialPrefill.lessonId, schemeId: initialPrefill.schemeId }
   })
 
   const assessments = useLiveQuery(() => getAssessments(), [])
+  const lessons = useLiveQuery(() => getLessonPlans(), [])
+  const lessonTitleById = new Map((lessons ?? []).map((l) => [l.id, l.title]))
+  const parentLessonTitle = parentLesson ? lessonTitleById.get(parentLesson.lessonId) : undefined
   const localContext = useLocalContext()
   const [copied, setCopied] = useState(false)
   const bufferRef = useRef('')
@@ -56,6 +94,12 @@ export default function AssessmentsPage() {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (location.state) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [location.pathname, location.state, navigate])
 
   const handleCopy = async (content: string) => {
     try {
@@ -125,6 +169,8 @@ export default function AssessmentsPage() {
         questions: [],
         level: formData.level as EducationLevel,
         subject: formData.subject as Subject,
+        lessonId: parentLesson?.lessonId,
+        schemeId: parentLesson?.schemeId,
         createdAt: new Date(),
       }
 
@@ -146,6 +192,7 @@ export default function AssessmentsPage() {
     setShowForm(true)
     setGeneratedContent('')
     setViewing(null)
+    setParentLesson(null)
     setFormData({
       topic: '',
       subject: '',
@@ -215,11 +262,41 @@ export default function AssessmentsPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-bold text-slate-800">Create Assessment</h2>
           {!isGenerating && (
-            <Button variant="ghost" onClick={() => { setShowForm(false); setGeneratedContent('') }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowForm(false)
+                setGeneratedContent('')
+                setParentLesson(null)
+              }}
+            >
               Cancel
             </Button>
           )}
         </div>
+
+        {parentLesson && !isGenerating && !generatedContent && (
+          <Card hover={false} className="bg-teal-50/40 border-teal-100">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-2xl bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+                <BookOpen size={18} />
+              </div>
+              <div className="flex-1 min-w-0 text-sm">
+                <p className="font-semibold text-slate-800">Spawning from lesson</p>
+                {parentLessonTitle && (
+                  <p className="text-slate-600 mt-1 truncate">{parentLessonTitle}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setParentLesson(null)}
+                className="text-xs text-slate-500 hover:text-slate-700 underline shrink-0"
+              >
+                Detach
+              </button>
+            </div>
+          </Card>
+        )}
 
         <AnimatePresence mode="wait">
           {!generatedContent && !isGenerating && (
@@ -388,6 +465,18 @@ export default function AssessmentsPage() {
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-slate-800 text-lg truncate">{assessment.title}</h3>
                 <p className="text-sm text-slate-500 mt-1 capitalize">{assessment.type}</p>
+                {assessment.lessonId && lessonTitleById.has(assessment.lessonId) && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate('/', { state: { openLessonId: assessment.lessonId } })
+                    }
+                    className="text-xs font-medium text-teal-600 mt-2 inline-flex items-center gap-1 hover:underline"
+                  >
+                    <BookOpen size={12} />
+                    From: {lessonTitleById.get(assessment.lessonId)}
+                  </button>
+                )}
               </div>
               <div className="flex gap-2">
                 <motion.button

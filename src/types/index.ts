@@ -31,6 +31,10 @@ export interface LessonPlan {
   conclusion: string
   assessment: string
   homework?: string
+  content?: string
+  schemeId?: string
+  weekNumber?: number
+  weekTopic?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -46,6 +50,8 @@ export interface Activity {
   instructions: string[]
   level: EducationLevel
   subject: Subject
+  lessonId?: string
+  schemeId?: string
   createdAt: Date
 }
 
@@ -57,6 +63,8 @@ export interface Assessment {
   questions: AssessmentQuestion[]
   level: EducationLevel
   subject: Subject
+  lessonId?: string
+  schemeId?: string
   createdAt: Date
 }
 
