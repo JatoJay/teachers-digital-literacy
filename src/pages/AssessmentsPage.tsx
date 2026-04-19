@@ -20,6 +20,7 @@ import { useLocalContext } from '../hooks/useLocalContext'
 import { buildAssessmentPrompt } from '../lib/prompts/lesson-plan'
 import { getAssessments, saveAssessment, getLessonPlans, db } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
+import { SUBJECTS, LEVELS } from '../lib/constants'
 import type { EducationLevel, Subject, Assessment } from '../types'
 
 interface AssessmentPrefill {
@@ -29,20 +30,6 @@ interface AssessmentPrefill {
   lessonId?: string
   schemeId?: string
 }
-
-const SUBJECTS: { value: Subject; label: string }[] = [
-  { value: 'mathematics', label: 'Mathematics' },
-  { value: 'english', label: 'English Language' },
-  { value: 'science', label: 'Science' },
-  { value: 'social_studies', label: 'Social Studies' },
-  { value: 'other', label: 'Other Subject' },
-]
-
-const LEVELS: { value: EducationLevel; label: string }[] = [
-  { value: 'primary', label: 'Primary School' },
-  { value: 'secondary', label: 'Secondary School' },
-  { value: 'tertiary', label: 'University/Polytechnic' },
-]
 
 const ASSESSMENT_TYPES = [
   { value: 'quiz', label: 'Quick Quiz (5-10 questions)' },

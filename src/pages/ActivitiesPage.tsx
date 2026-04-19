@@ -20,6 +20,7 @@ import { useLocalContext } from '../hooks/useLocalContext'
 import { buildActivityPrompt } from '../lib/prompts/lesson-plan'
 import { getActivities, saveActivity, getLessonPlans, db } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
+import { SUBJECTS, LEVELS } from '../lib/constants'
 import type { EducationLevel, Subject, Activity } from '../types'
 
 interface ActivityPrefill {
@@ -29,22 +30,6 @@ interface ActivityPrefill {
   lessonId?: string
   schemeId?: string
 }
-
-const SUBJECTS: { value: Subject; label: string }[] = [
-  { value: 'mathematics', label: 'Mathematics' },
-  { value: 'english', label: 'English Language' },
-  { value: 'science', label: 'Science' },
-  { value: 'social_studies', label: 'Social Studies' },
-  { value: 'creative_arts', label: 'Creative Arts' },
-  { value: 'physical_education', label: 'Physical Education' },
-  { value: 'other', label: 'Other Subject' },
-]
-
-const LEVELS: { value: EducationLevel; label: string }[] = [
-  { value: 'primary', label: 'Primary School' },
-  { value: 'secondary', label: 'Secondary School' },
-  { value: 'tertiary', label: 'University/Polytechnic' },
-]
 
 const ACTIVITY_TYPES = [
   { value: 'individual', label: 'Individual Work' },
