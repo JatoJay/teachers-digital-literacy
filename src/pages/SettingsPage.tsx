@@ -11,6 +11,7 @@ const LANGUAGES = [
   { value: 'en', label: 'English' },
   { value: 'fr', label: 'French (Francais)' },
   { value: 'sw', label: 'Swahili (Kiswahili)' },
+  { value: 'rw', label: 'Kinyarwanda' },
   { value: 'ha', label: 'Hausa' },
   { value: 'yo', label: 'Yoruba' },
   { value: 'ig', label: 'Igbo' },

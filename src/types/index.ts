@@ -92,7 +92,7 @@ export interface SchemeOfWork {
 }
 
 export interface AppSettings {
-  language: 'en' | 'fr' | 'sw' | 'ha' | 'yo' | 'ig' | 'ar'
+  language: 'en' | 'fr' | 'sw' | 'ha' | 'yo' | 'ig' | 'ar' | 'rw'
   theme: 'light' | 'dark' | 'system'
   educationLevel: EducationLevel
   country?: string
