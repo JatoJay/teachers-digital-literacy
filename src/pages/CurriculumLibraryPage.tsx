@@ -304,9 +304,9 @@ export default function CurriculumLibraryPage() {
           <Library size={24} />
         </div>
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Curriculum Library</h2>
+          <h2 className="text-2xl font-bold text-slate-800">Curriculum</h2>
           <p className="text-sm text-slate-500">
-            Upload official curricula once, reuse them in every lesson and scheme
+            Upload official syllabi once, reuse them in every scheme and lesson
           </p>
         </div>
       </div>

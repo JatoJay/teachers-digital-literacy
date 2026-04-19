@@ -4,9 +4,9 @@ import { motion } from 'framer-motion'
 import { BookOpen, Lightbulb, ClipboardCheck, CalendarRange, Library, Settings } from 'lucide-react'
 
 const navItems = [
-  { to: '/', icon: BookOpen, label: 'Lessons', color: 'teal' },
+  { to: '/curriculum', icon: Library, label: 'Curriculum', color: 'emerald' },
   { to: '/scheme', icon: CalendarRange, label: 'Scheme', color: 'indigo' },
-  { to: '/curriculum', icon: Library, label: 'Library', color: 'emerald' },
+  { to: '/', icon: BookOpen, label: 'Lessons', color: 'teal' },
   { to: '/activities', icon: Lightbulb, label: 'Activities', color: 'amber' },
   { to: '/assessments', icon: ClipboardCheck, label: 'Tests', color: 'pink' },
   { to: '/settings', icon: Settings, label: 'Settings', color: 'blue' },
