@@ -104,6 +104,71 @@ async function tryCacheBlob(cache: Cache, blob: Blob): Promise<void> {
   }
 }
 
+// Streams the model body straight from the network into Cache Storage without
+// ever holding all 1.87 GB in the JS heap. The body is tee'd: one branch is
+// drained just for byte counting (so we can report progress) while the other
+// is handed to cache.put as the body of a streaming Response. On phones with
+// limited per-tab memory (notably iOS Safari and 3 GB Android devices) this
+// is the difference between a successful install and a silently killed tab.
+async function streamDownloadIntoCache(
+  cache: Cache,
+  onProgress?: (progress: number) => void,
+): Promise<Blob> {
+  const response = await fetch(MODEL_URL)
+  if (!response.ok) {
+    throw new Error(`Model download failed: HTTP ${response.status}`)
+  }
+  if (!response.body) {
+    throw new Error('Model download has no response body')
+  }
+
+  const total = parseInt(response.headers.get('content-length') ?? '0', 10)
+  const [counterStream, cacheStream] = response.body.tee()
+
+  onProgress?.(2)
+
+  let received = 0
+  const counterPromise = (async () => {
+    const reader = counterStream.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      if (total > 0) {
+        onProgress?.(Math.min(98, Math.round((received / total) * 95) + 2))
+      }
+    }
+  })()
+
+  const cacheHeaders = new Headers({ 'Content-Type': 'application/octet-stream' })
+  if (total > 0) cacheHeaders.set('Content-Length', String(total))
+
+  const cachePromise = cache.put(
+    MODEL_URL,
+    new Response(cacheStream, { headers: cacheHeaders }),
+  )
+
+  try {
+    await Promise.all([counterPromise, cachePromise])
+  } catch (err) {
+    // A network drop or quota error mid-stream can leave a partial entry that
+    // isModelCached() would later report as valid by Content-Length alone.
+    await cache.delete(MODEL_URL).catch(() => undefined)
+    throw err
+  }
+
+  if (total > 0 && received !== total) {
+    await cache.delete(MODEL_URL).catch(() => undefined)
+    throw new Error(`Truncated download: ${received} of ${total} bytes`)
+  }
+
+  const cached = await readCachedBlob(cache)
+  if (!cached) {
+    throw new Error('Model downloaded but could not be read back from cache')
+  }
+  return cached
+}
+
 export async function getCachedModelUrl(
   onProgress?: (progress: number) => void,
 ): Promise<string> {
@@ -122,8 +187,18 @@ export async function getCachedModelUrl(
     return URL.createObjectURL(cached)
   }
 
-  const blob = await downloadModel(onProgress)
-  await tryCacheBlob(cache, blob)
+  let blob: Blob
+  try {
+    blob = await streamDownloadIntoCache(cache, onProgress)
+  } catch (streamErr) {
+    // Browsers that mishandle streaming Response bodies inside cache.put fall
+    // back to the in-heap path. Costs a fresh fetch but keeps the worst-case
+    // behavior no worse than before this change.
+    console.warn('Streaming download failed, retrying with in-memory path:', streamErr)
+    blob = await downloadModel(onProgress)
+    await tryCacheBlob(cache, blob)
+  }
+
   onProgress?.(100)
   return URL.createObjectURL(blob)
 }
