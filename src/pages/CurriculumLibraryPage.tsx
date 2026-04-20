@@ -12,6 +12,10 @@ import {
   AlertCircle,
   X,
   CalendarRange,
+  BookOpen,
+  Eye,
+  Pencil,
+  ArrowLeft,
 } from 'lucide-react'
 import { Button, Card, Input, Select, TextArea } from '../components/ui'
 import { extractPdfText } from '../lib/pdf-parse'
@@ -34,6 +38,8 @@ export default function CurriculumLibraryPage() {
   const [showForm, setShowForm] = useState(false)
   const [isParsing, setIsParsing] = useState(false)
   const [parseError, setParseError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<Curriculum | null>(null)
+  const [editing, setEditing] = useState<Curriculum | null>(null)
   const [formData, setFormData] = useState({
     country: '',
     level: '' as EducationLevel | '',
@@ -106,21 +112,31 @@ export default function CurriculumLibraryPage() {
       COUNTRY_PRESETS.find((c) => c.code === formData.country)?.name ?? formData.country
     const autoTitle = `${countryLabel} · ${subjectLabel} · ${formData.grade}`
 
-    const existing = await findCurriculum({
-      country: formData.country,
-      level: formData.level as EducationLevel,
-      subject: formData.subject as Subject,
-      grade: formData.grade,
-    })
+    let id: string
+    let createdAt: Date
 
-    if (existing && !confirm(
-      `A curriculum already exists for ${countryLabel} ${subjectLabel} ${formData.grade}. Replace it?`,
-    )) {
-      return
+    if (editing) {
+      // Explicit edit — keep the original id and timestamp so anything bound
+      // to this curriculum (lessons, schemes via curriculumId) stays linked.
+      id = editing.id
+      createdAt = editing.createdAt
+    } else {
+      const existing = await findCurriculum({
+        level: formData.level as EducationLevel,
+        subject: formData.subject as Subject,
+        grade: formData.grade,
+      })
+      if (existing && !confirm(
+        `A curriculum already exists for ${countryLabel} ${subjectLabel} ${formData.grade}. Replace it?`,
+      )) {
+        return
+      }
+      id = existing?.id ?? crypto.randomUUID()
+      createdAt = existing?.createdAt ?? new Date()
     }
 
     const curriculum: Curriculum = {
-      id: existing?.id ?? crypto.randomUUID(),
+      id,
       country: formData.country,
       level: formData.level as EducationLevel,
       subject: formData.subject as Subject,
@@ -129,17 +145,47 @@ export default function CurriculumLibraryPage() {
       sourceFileName: formData.sourceFileName || undefined,
       pasteText: formData.parsedText ? undefined : formData.pasteText.trim(),
       parsedText: text,
-      createdAt: existing?.createdAt ?? new Date(),
+      createdAt,
     }
 
     await saveCurriculum(curriculum)
     resetForm()
+    setEditing(null)
+    setShowForm(false)
+  }
+
+  const handleStartEdit = (c: Curriculum) => {
+    setEditing(c)
+    setViewing(null)
+    setParseError(null)
+    setFormData({
+      country: c.country,
+      level: c.level,
+      subject: c.subject,
+      grade: c.grade,
+      title: c.title,
+      pasteText: c.pasteText ?? '',
+      sourceFileName: c.sourceFileName ?? '',
+      parsedText: c.parsedText,
+    })
+    setShowForm(true)
+  }
+
+  const handleCancelForm = () => {
+    resetForm()
+    setEditing(null)
     setShowForm(false)
   }
 
   const handleDelete = async (id: string, title: string) => {
     if (confirm(`Remove "${title}" from your library?`)) {
       await deleteCurriculum(id)
+      if (viewing?.id === id) setViewing(null)
+      if (editing?.id === id) {
+        setEditing(null)
+        setShowForm(false)
+        resetForm()
+      }
     }
   }
 
@@ -150,9 +196,36 @@ export default function CurriculumLibraryPage() {
           subject: c.subject,
           level: c.level,
           grade: c.grade,
+          curriculumId: c.id,
         },
       },
     })
+  }
+
+  const handleCreateLesson = (c: Curriculum) => {
+    navigate('/', {
+      state: {
+        prefill: {
+          subject: c.subject,
+          level: c.level,
+          grade: c.grade,
+          curriculumId: c.id,
+        },
+      },
+    })
+  }
+
+  if (viewing) {
+    return (
+      <CurriculumDetailView
+        curriculum={viewing}
+        onBack={() => setViewing(null)}
+        onEdit={() => handleStartEdit(viewing)}
+        onDelete={() => handleDelete(viewing.id, viewing.title)}
+        onCreateScheme={() => handleCreateScheme(viewing)}
+        onCreateLesson={() => handleCreateLesson(viewing)}
+      />
+    )
   }
 
   if (showForm) {
@@ -163,14 +236,10 @@ export default function CurriculumLibraryPage() {
         className="space-y-6"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-slate-800">Add Curriculum</h2>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              resetForm()
-              setShowForm(false)
-            }}
-          >
+          <h2 className="text-2xl font-bold text-slate-800">
+            {editing ? 'Update Curriculum' : 'Add Curriculum'}
+          </h2>
+          <Button variant="ghost" onClick={handleCancelForm}>
             Cancel
           </Button>
         </div>
@@ -213,7 +282,7 @@ export default function CurriculumLibraryPage() {
 
             <Input
               label="Title (optional)"
-              placeholder="Auto-generated if left blank"
+              placeholder="e.g., Term 1 Mathematics — Primary 4"
               value={formData.title}
               onChange={(e) => setFormData({ ...formData, title: e.target.value })}
             />
@@ -223,7 +292,7 @@ export default function CurriculumLibraryPage() {
                 Curriculum Source
               </label>
               <p className="text-sm text-slate-500">
-                Upload the official PDF or paste the text. Either is fine.
+                Tip: add one term, one subject at a time. Smaller entries give sharper, on-syllabus lessons.
               </p>
 
               <label
@@ -281,11 +350,11 @@ export default function CurriculumLibraryPage() {
               {!formData.parsedText && (
                 <TextArea
                   label="Or paste curriculum text"
-                  placeholder="Paste topics, objectives, scope and sequence..."
+                  placeholder="Paste this term's topics, objectives, and scope for one subject..."
                   rows={8}
                   value={formData.pasteText}
                   onChange={(e) => setFormData({ ...formData, pasteText: e.target.value })}
-                  helpText="Useful when the curriculum is online or in a Word doc"
+                  helpText="One term × one subject keeps the AI focused on what you're actually teaching"
                 />
               )}
 
@@ -304,7 +373,7 @@ export default function CurriculumLibraryPage() {
               icon={<CheckCircle size={20} />}
               disabled={isParsing}
             >
-              Save to Library
+              {editing ? 'Update Curriculum' : 'Save to Library'}
             </Button>
           </form>
         </Card>
@@ -321,7 +390,7 @@ export default function CurriculumLibraryPage() {
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Curriculum</h2>
           <p className="text-sm text-slate-500">
-            Upload official syllabi once, reuse them in every scheme and lesson
+            Add one term per subject — smaller chunks are easier to manage and reuse
           </p>
         </div>
       </div>
@@ -342,7 +411,7 @@ export default function CurriculumLibraryPage() {
           </div>
           <p className="text-lg font-medium text-slate-600">No curricula yet</p>
           <p className="text-slate-400 mt-1">
-            Add your country's official syllabus to get aligned lessons.
+            Start with one subject for this term — e.g., Term 1 Mathematics, Primary 4.
           </p>
         </Card>
       )}
@@ -358,7 +427,11 @@ export default function CurriculumLibraryPage() {
             return (
               <Card key={c.id} delay={index}>
                 <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setViewing(c)}
+                    className="flex-1 min-w-0 text-left"
+                  >
                     <div className="flex items-center gap-2 text-xs text-emerald-600 font-semibold uppercase tracking-wide">
                       <FileText size={12} />
                       {countryLabel} · {subjectLabel} · {c.grade}
@@ -378,26 +451,55 @@ export default function CurriculumLibraryPage() {
                     <p className="text-xs text-slate-400 mt-2">
                       {c.parsedText.length.toLocaleString()} characters
                     </p>
+                  </button>
+                  <div className="flex flex-col gap-2 shrink-0">
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => setViewing(c)}
+                      className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                      aria-label="View curriculum"
+                    >
+                      <Eye size={18} />
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => handleStartEdit(c)}
+                      className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-500 transition-colors"
+                      aria-label="Edit curriculum"
+                    >
+                      <Pencil size={18} />
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => handleDelete(c.id, c.title)}
+                      className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-500 transition-colors"
+                      aria-label="Delete curriculum"
+                    >
+                      <Trash2 size={18} />
+                    </motion.button>
                   </div>
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => handleDelete(c.id, c.title)}
-                    className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-500 transition-colors"
-                    aria-label="Delete curriculum"
-                  >
-                    <Trash2 size={18} />
-                  </motion.button>
                 </div>
-                <div className="mt-4 pt-4 border-t border-slate-100">
+                <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => handleCreateScheme(c)}
                     icon={<CalendarRange size={16} />}
-                    className="w-full"
+                    className="flex-1 min-w-[160px]"
                   >
                     Create Scheme of Work
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCreateLesson(c)}
+                    icon={<BookOpen size={16} />}
+                    className="flex-1 min-w-[160px]"
+                  >
+                    Create Lesson
                   </Button>
                 </div>
               </Card>
@@ -405,6 +507,111 @@ export default function CurriculumLibraryPage() {
           })}
         </div>
       </AnimatePresence>
+    </motion.div>
+  )
+}
+
+interface CurriculumDetailViewProps {
+  curriculum: Curriculum
+  onBack: () => void
+  onEdit: () => void
+  onDelete: () => void
+  onCreateScheme: () => void
+  onCreateLesson: () => void
+}
+
+function CurriculumDetailView({
+  curriculum,
+  onBack,
+  onEdit,
+  onDelete,
+  onCreateScheme,
+  onCreateLesson,
+}: CurriculumDetailViewProps) {
+  const subjectLabel =
+    SUBJECTS.find((s) => s.value === curriculum.subject)?.label ?? curriculum.subject
+  const countryLabel =
+    COUNTRY_PRESETS.find((p) => p.code === curriculum.country)?.name ?? curriculum.country
+  const levelLabel = LEVELS.find((l) => l.value === curriculum.level)?.label ?? curriculum.level
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <Button variant="ghost" onClick={onBack} icon={<ArrowLeft size={20} />}>
+        Back
+      </Button>
+
+      <Card hover={false} className="bg-emerald-50/40 border-emerald-100">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+            <Library size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
+              {countryLabel} · {subjectLabel} · {curriculum.grade}
+            </div>
+            <h2 className="text-xl font-bold text-slate-800 mt-1 break-words">
+              {curriculum.title}
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">{levelLabel}</p>
+            {curriculum.sourceFileName && (
+              <p className="text-xs text-slate-500 mt-1 truncate">
+                Source: {curriculum.sourceFileName}
+              </p>
+            )}
+            <p className="text-xs text-slate-400 mt-1">
+              {curriculum.parsedText.length.toLocaleString()} characters
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card hover={false}>
+        <div className="flex items-center gap-2 mb-3">
+          <FileText size={16} className="text-slate-500" />
+          <h3 className="text-base font-semibold text-slate-800">Curriculum Text</h3>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto rounded-xl bg-slate-50 p-4">
+          <pre className="whitespace-pre-wrap font-sans text-sm text-slate-700 leading-relaxed">
+            {curriculum.parsedText}
+          </pre>
+        </div>
+      </Card>
+
+      <div className="flex flex-wrap gap-3">
+        <Button
+          variant="outline"
+          onClick={onEdit}
+          icon={<Pencil size={18} />}
+          className="flex-1 min-w-[140px]"
+        >
+          Update
+        </Button>
+        <Button
+          variant="outline"
+          onClick={onDelete}
+          icon={<Trash2 size={18} />}
+          className="flex-1 min-w-[140px]"
+        >
+          Delete
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <Button
+          onClick={onCreateScheme}
+          icon={<CalendarRange size={18} />}
+          className="flex-1 min-w-[160px]"
+        >
+          Create Scheme of Work
+        </Button>
+        <Button
+          onClick={onCreateLesson}
+          icon={<BookOpen size={18} />}
+          className="flex-1 min-w-[160px]"
+        >
+          Create Lesson
+        </Button>
+      </div>
     </motion.div>
   )
 }

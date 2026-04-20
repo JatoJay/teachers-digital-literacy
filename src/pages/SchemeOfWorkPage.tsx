@@ -27,7 +27,7 @@ import {
   deleteScheme,
   getLessonsBySchemeId,
   findCurriculum,
-  getSettings,
+  getCurriculum,
 } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
 import { parseSchemeWeeks } from '../lib/scheme-parser'
@@ -45,6 +45,7 @@ interface SchemePrefill {
   subject?: Subject
   level?: EducationLevel
   grade?: string
+  curriculumId?: string
 }
 
 type SchemeNavState = { prefill?: SchemePrefill } | null
@@ -72,21 +73,28 @@ export default function SchemeOfWorkPage() {
       weekCount: '12',
     }
   })
+  const [parentCurriculumId, setParentCurriculumId] = useState<string | null>(
+    () => navStateOnMount?.prefill?.curriculumId ?? null,
+  )
 
   const schemes = useLiveQuery(() => getSchemes(), [])
   const localContext = useLocalContext()
-  const country = useLiveQuery(() => getSettings().then((s) => s.country), [])
+  // An explicit curriculumId from the spawn chain wins over a loose match —
+  // it represents the teacher's intent ("build this scheme from THIS syllabus")
+  // and survives form-field edits or grade typos.
   const matchedCurriculum = useLiveQuery(
-    () =>
-      country && formData.subject && formData.level && formData.grade
-        ? findCurriculum({
-            country,
-            level: formData.level as EducationLevel,
-            subject: formData.subject as Subject,
-            grade: formData.grade,
-          })
-        : undefined,
-    [country, formData.subject, formData.level, formData.grade],
+    () => {
+      if (parentCurriculumId) return getCurriculum(parentCurriculumId)
+      if (formData.subject && formData.level && formData.grade) {
+        return findCurriculum({
+          level: formData.level as EducationLevel,
+          subject: formData.subject as Subject,
+          grade: formData.grade,
+        })
+      }
+      return undefined
+    },
+    [parentCurriculumId, formData.subject, formData.level, formData.grade],
   )
   const [copied, setCopied] = useState(false)
   const bufferRef = useRef('')
@@ -181,6 +189,7 @@ export default function SchemeOfWorkPage() {
         term: formData.term,
         weekCount,
         content: finalContent,
+        curriculumId: parentCurriculumId ?? matchedCurriculum?.id,
         createdAt: new Date(),
       }
 
@@ -202,6 +211,7 @@ export default function SchemeOfWorkPage() {
     setShowForm(true)
     setGeneratedContent('')
     setViewing(null)
+    setParentCurriculumId(null)
     setFormData({
       subject: '',
       level: '',
@@ -235,6 +245,7 @@ export default function SchemeOfWorkPage() {
                 schemeId: viewing.id,
                 weekNumber: week.number,
                 weekTopic: week.topic,
+                curriculumId: viewing.curriculumId,
               },
             },
           })
@@ -318,13 +329,21 @@ export default function SchemeOfWorkPage() {
               {matchedCurriculum ? (
                 <div className="flex items-start gap-3 p-3 rounded-2xl bg-emerald-50 text-emerald-700 text-sm">
                   <FileText size={16} className="shrink-0 mt-0.5" />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold truncate">Curriculum loaded</p>
                     <p className="text-emerald-600 text-xs truncate">{matchedCurriculum.title}</p>
                   </div>
+                  {parentCurriculumId && (
+                    <button
+                      type="button"
+                      onClick={() => setParentCurriculumId(null)}
+                      className="text-xs text-emerald-600 hover:text-emerald-800 underline shrink-0"
+                    >
+                      Detach
+                    </button>
+                  )}
                 </div>
               ) : (
-                country &&
                 formData.subject &&
                 formData.level &&
                 formData.grade && (

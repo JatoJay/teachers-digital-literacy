@@ -35,6 +35,7 @@ export interface LessonPlan {
   schemeId?: string
   weekNumber?: number
   weekTopic?: string
+  curriculumId?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -88,6 +89,7 @@ export interface SchemeOfWork {
   term: Term
   weekCount: number
   content: string
+  curriculumId?: string
   createdAt: Date
 }
 

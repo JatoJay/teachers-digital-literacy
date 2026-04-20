@@ -40,7 +40,16 @@ db.version(4).stores({
   curricula: 'id, country, level, subject, grade, createdAt, [country+level+subject+grade]',
 })
 
+db.version(5).stores({
+  schemes: 'id, subject, level, term, createdAt, curriculumId',
+  lessonPlans: 'id, subject, level, createdAt, schemeId, curriculumId',
+})
+
 export { db }
+
+function normalizeGrade(grade: string): string {
+  return grade.trim().toLowerCase()
+}
 
 export async function getSettings(): Promise<AppSettings> {
   const settings = await db.settings.get('app')
@@ -131,6 +140,13 @@ export async function deleteAssessment(id: string) {
 
 export async function saveCurriculum(curriculum: Curriculum) {
   await db.curricula.put(curriculum)
+  // Default the app's country from the first curriculum a teacher saves so the
+  // local-context plumbing (currency, exam boards, language hints) lights up
+  // without requiring a separate trip to Settings. Existing values are kept.
+  const settings = await getSettings()
+  if (!settings.country) {
+    await saveSettings({ country: curriculum.country })
+  }
 }
 
 export async function getCurricula() {
@@ -145,14 +161,19 @@ export async function deleteCurriculum(id: string) {
   await db.curricula.delete(id)
 }
 
+// Curricula are a teacher's personal library — country is a categorization
+// tag, not a hard filter, and grade is free-form text. Match on the
+// teacher-meaningful fields with case/whitespace-insensitive grade comparison
+// so a typo like "Primary 4" vs "primary 4 " doesn't silently break the link.
 export async function findCurriculum(filter: {
-  country: string
   level: EducationLevel
   subject: Subject
   grade: string
 }) {
+  const target = normalizeGrade(filter.grade)
   return db.curricula
-    .where('[country+level+subject+grade]')
-    .equals([filter.country, filter.level, filter.subject, filter.grade])
+    .where('level')
+    .equals(filter.level)
+    .filter((c) => c.subject === filter.subject && normalizeGrade(c.grade) === target)
     .first()
 }

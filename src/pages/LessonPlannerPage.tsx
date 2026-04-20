@@ -16,6 +16,8 @@ import {
   Lightbulb,
   ClipboardCheck,
   FileText,
+  Library,
+  ArrowRight,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button, Card, Input, Select, TextArea } from '../components/ui'
@@ -28,8 +30,8 @@ import {
   getAssessmentsByLessonId,
   getScheme,
   getSchemes,
-  getSettings,
   findCurriculum,
+  getCurriculum,
 } from '../lib/db'
 import { exportAsPDF } from '../lib/print'
 import { buildCurriculumContextSection } from '../lib/curriculum-context'
@@ -44,6 +46,7 @@ interface LessonPrefill {
   schemeId?: string
   weekNumber?: number
   weekTopic?: string
+  curriculumId?: string
 }
 
 const DURATIONS = [
@@ -96,23 +99,29 @@ export default function LessonPlannerPage() {
     if (!p?.schemeId) return null
     return { schemeId: p.schemeId, weekNumber: p.weekNumber, weekTopic: p.weekTopic }
   })
+  const [parentCurriculumId, setParentCurriculumId] = useState<string | null>(
+    () => navStateOnMount?.prefill?.curriculumId ?? null,
+  )
   const [lastGeneratedId, setLastGeneratedId] = useState<string | null>(null)
 
   const { isGenerating, streamedContent, error, generate, reset } = useLessonGenerator()
   const lessonPlans = useLiveQuery(() => getLessonPlans(), [])
   const localContext = useLocalContext()
-  const country = useLiveQuery(() => getSettings().then((s) => s.country), [])
+  // Prefer the explicit curriculumId carried via the spawn chain. Falls back
+  // to a level/subject/grade match (case + whitespace insensitive on grade).
   const matchedCurriculum = useLiveQuery(
-    () =>
-      country && formData.subject && formData.level && formData.grade
-        ? findCurriculum({
-            country,
-            level: formData.level as EducationLevel,
-            subject: formData.subject as Subject,
-            grade: formData.grade,
-          })
-        : undefined,
-    [country, formData.subject, formData.level, formData.grade],
+    () => {
+      if (parentCurriculumId) return getCurriculum(parentCurriculumId)
+      if (formData.subject && formData.level && formData.grade) {
+        return findCurriculum({
+          level: formData.level as EducationLevel,
+          subject: formData.subject as Subject,
+          grade: formData.grade,
+        })
+      }
+      return undefined
+    },
+    [parentCurriculumId, formData.subject, formData.level, formData.grade],
   )
   const matchingSchemes = useLiveQuery(
     () =>
@@ -155,6 +164,7 @@ export default function LessonPlannerPage() {
       additionalContext: formData.additionalContext,
       localContext,
       curriculumSection,
+      curriculumId: parentCurriculumId ?? matchedCurriculum?.id,
       schemeId: parentScheme?.schemeId,
       weekNumber: parentScheme?.weekNumber,
       weekTopic: parentScheme?.weekTopic,
@@ -172,6 +182,7 @@ export default function LessonPlannerPage() {
     setShowForm(true)
     setViewingPlan(null)
     setParentScheme(null)
+    setParentCurriculumId(null)
     setLastGeneratedId(null)
     reset()
     setFormData({
@@ -344,14 +355,42 @@ export default function LessonPlannerPage() {
                 rows={3}
               />
 
-              {matchedCurriculum && (
+              {matchedCurriculum ? (
                 <div className="flex items-start gap-3 p-3 rounded-2xl bg-emerald-50 text-emerald-700 text-sm">
                   <FileText size={16} className="shrink-0 mt-0.5" />
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold truncate">Curriculum loaded</p>
                     <p className="text-emerald-600 text-xs truncate">{matchedCurriculum.title}</p>
                   </div>
+                  {parentCurriculumId && (
+                    <button
+                      type="button"
+                      onClick={() => setParentCurriculumId(null)}
+                      className="text-xs text-emerald-600 hover:text-emerald-800 underline shrink-0"
+                    >
+                      Detach
+                    </button>
+                  )}
                 </div>
+              ) : (
+                formData.subject &&
+                formData.level &&
+                formData.grade && (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/curriculum')}
+                    className="flex items-start gap-3 w-full p-3 rounded-2xl bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 transition-colors text-sm text-left"
+                  >
+                    <Library size={16} className="shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">No curriculum loaded</p>
+                      <p className="text-xs opacity-80">
+                        Lesson will be generic without a syllabus · Tap to open Curriculum
+                      </p>
+                    </div>
+                    <ArrowRight size={14} className="shrink-0 mt-1 opacity-60" />
+                  </button>
+                )
               )}
 
               {!parentScheme &&
@@ -591,12 +630,32 @@ function LessonDetailView({
     () => (plan.schemeId ? getScheme(plan.schemeId) : undefined),
     [plan.schemeId],
   )
+  const curriculum = useLiveQuery(
+    () => (plan.curriculumId ? getCurriculum(plan.curriculumId) : undefined),
+    [plan.curriculumId],
+  )
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       <Button variant="ghost" onClick={onBack} icon={<ArrowLeft size={20} />}>
         Back
       </Button>
+
+      {curriculum && (
+        <Card hover={false} className="bg-emerald-50/50 border-emerald-100">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+              <Library size={18} />
+            </div>
+            <div className="flex-1 min-w-0 text-sm">
+              <p className="font-semibold text-slate-800 truncate">From: {curriculum.title}</p>
+              <p className="text-slate-600 mt-1 truncate">
+                Grounded in {curriculum.parsedText.length.toLocaleString()} characters of syllabus
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {scheme && (
         <Card hover={false} className="bg-indigo-50/50 border-indigo-100">

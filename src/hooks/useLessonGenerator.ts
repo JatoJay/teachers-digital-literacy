@@ -17,6 +17,7 @@ interface GeneratorInput {
   additionalContext?: string
   localContext?: LocalContext
   curriculumSection?: string
+  curriculumId?: string
   schemeId?: string
   weekNumber?: number
   weekTopic?: string
@@ -95,6 +96,7 @@ export function useLessonGenerator() {
         schemeId: input.schemeId,
         weekNumber: input.weekNumber,
         weekTopic: input.weekTopic,
+        curriculumId: input.curriculumId,
         createdAt: new Date(),
         updatedAt: new Date(),
       }
