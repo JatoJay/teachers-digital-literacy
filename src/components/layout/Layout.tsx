@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import Header from './Header'
 import BottomNav from './BottomNav'
+import InstallPrompt from '../InstallPrompt'
 
 export default function Layout() {
   return (
@@ -9,6 +10,7 @@ export default function Layout() {
       <main className="flex-1 px-4 py-6 pb-28 max-w-3xl mx-auto w-full">
         <Outlet />
       </main>
+      <InstallPrompt />
       <BottomNav />
     </div>
   )

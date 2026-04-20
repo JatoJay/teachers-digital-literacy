@@ -1,8 +1,10 @@
-const STATIC_CACHE = 'karatuai-static-v2'
+const STATIC_CACHE = 'karatuai-static-v3'
 const PRECACHE = ['/', '/manifest.json', '/favicon.svg']
 
 // Caches that earlier SW versions left behind. They are deleted on activate.
-const LEGACY_CACHES = ['teachassist-v1', 'karatuai-static-v1']
+// v2 held entries that resolved to the internal Cloud Run port (:8080) on the
+// custom domain — bumping the version forces a clean rebuild of the cache.
+const LEGACY_CACHES = ['teachassist-v1', 'karatuai-static-v1', 'karatuai-static-v2']
 
 self.addEventListener('install', (event) => {
   self.skipWaiting()
