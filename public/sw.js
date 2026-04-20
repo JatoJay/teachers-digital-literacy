@@ -1,10 +1,17 @@
-const STATIC_CACHE = 'karatuai-static-v3'
+const STATIC_CACHE = 'karatuai-static-v4'
+const MODEL_CACHE = 'karatuai-model-cache-v4'
+const MODEL_HOST = 'models.karatuai.com'
 const PRECACHE = ['/', '/manifest.json', '/favicon.svg']
 
 // Caches that earlier SW versions left behind. They are deleted on activate.
 // v2 held entries that resolved to the internal Cloud Run port (:8080) on the
 // custom domain — bumping the version forces a clean rebuild of the cache.
-const LEGACY_CACHES = ['teachassist-v1', 'karatuai-static-v1', 'karatuai-static-v2']
+const LEGACY_CACHES = [
+  'teachassist-v1',
+  'karatuai-static-v1',
+  'karatuai-static-v2',
+  'karatuai-static-v3',
+]
 
 self.addEventListener('install', (event) => {
   self.skipWaiting()
@@ -33,6 +40,10 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+function isModelRequest(url) {
+  return url.host === MODEL_HOST
+}
+
 function shouldHandle(request) {
   if (request.method !== 'GET') return false
   if (request.headers.has('range')) return false
@@ -42,8 +53,9 @@ function shouldHandle(request) {
   } catch {
     return false
   }
-  // Only handle same-origin requests. The AI model lives on models.karatuai.com
-  // (and other large assets may live on CDNs); we must never proxy or cache them.
+  // The AI model URL gets a dedicated path because it lives on a separate host
+  // and is populated by the page's streaming download — not by the SW itself.
+  if (isModelRequest(url)) return true
   if (url.origin !== self.location.origin) return false
   return true
 }
@@ -51,6 +63,41 @@ function shouldHandle(request) {
 self.addEventListener('fetch', (event) => {
   const { request } = event
   if (!shouldHandle(request)) return
+
+  let requestUrl
+  try {
+    requestUrl = new URL(request.url)
+  } catch {
+    return
+  }
+
+  // Model: serve from the cache the page populated via streaming download.
+  // We re-add CORS headers explicitly because (a) the cached entry may have
+  // been stored without them and (b) MediaPipe issues this fetch with cors
+  // mode, so the response we hand back must satisfy the cross-origin check.
+  if (isModelRequest(requestUrl)) {
+    event.respondWith(
+      (async () => {
+        try {
+          const cache = await caches.open(MODEL_CACHE)
+          const cached = await cache.match(request.url)
+          if (!cached) return fetch(request)
+
+          const headers = new Headers(cached.headers)
+          headers.set('Access-Control-Allow-Origin', '*')
+          headers.set('Cross-Origin-Resource-Policy', 'cross-origin')
+          return new Response(cached.body, {
+            status: cached.status,
+            statusText: cached.statusText,
+            headers,
+          })
+        } catch {
+          return fetch(request)
+        }
+      })(),
+    )
+    return
+  }
 
   // SPA navigations: network-first, fall back to the cached app shell.
   if (request.mode === 'navigate') {
