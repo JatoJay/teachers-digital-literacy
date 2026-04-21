@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Cpu, RefreshCw, Wifi, HardDrive } from 'lucide-react'
+import { Cpu, RefreshCw, Wifi, HardDrive, Smartphone } from 'lucide-react'
 import { useModel, useModelStatus } from '../hooks/useModel'
 import { Button } from './ui'
 
@@ -11,6 +11,41 @@ const PROGRESS_INITIAL = { width: 0 }
 const PROGRESS_TRANSITION = { duration: 0.3 }
 const ROTATE_LINEAR = { duration: 2, repeat: Infinity, ease: 'linear' as const }
 const ROTATE_NONE = { duration: 2, repeat: 0, ease: 'linear' as const }
+
+function UnsupportedOverlay() {
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-amber-50 to-white flex items-center justify-center p-6 z-50">
+      <motion.div
+        initial={SCALE_INITIAL}
+        animate={SCALE_ANIMATE}
+        className="text-center max-w-sm"
+      >
+        <div className="w-20 h-20 rounded-3xl bg-amber-100 flex items-center justify-center mx-auto mb-6">
+          <Smartphone size={40} className="text-amber-600" />
+        </div>
+
+        <h1 className="text-2xl font-bold text-slate-800 mb-3">
+          KaratuAI can't run on iPhone yet
+        </h1>
+
+        <p className="text-slate-600 mb-3">
+          The on-device AI needs more memory than browsers on iPhone allow. The
+          tab will crash before the model finishes loading.
+        </p>
+
+        <p className="text-slate-600 mb-2 font-medium">To use KaratuAI today:</p>
+        <ul className="text-slate-600 text-left mb-6 space-y-1 inline-block">
+          <li>• Open it in Chrome on a laptop or desktop</li>
+          <li>• Or use an Android phone</li>
+        </ul>
+
+        <p className="text-xs text-slate-400">
+          We're working on a native iPhone app to fix this.
+        </p>
+      </motion.div>
+    </div>
+  )
+}
 
 function LoadingOverlay() {
   const { status, progress, error, retry } = useModel()
@@ -105,7 +140,8 @@ function LoadingOverlay() {
 }
 
 export default function ModelLoadingScreen() {
-  const { isReady } = useModelStatus()
+  const { isReady, status } = useModelStatus()
   if (isReady) return null
+  if (status === 'unsupported') return <UnsupportedOverlay />
   return <LoadingOverlay />
 }

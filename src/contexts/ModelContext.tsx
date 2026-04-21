@@ -8,6 +8,7 @@ import {
   type ModelActionsValue,
 } from './model-context'
 import { getCachedModelUrl, isModelCached, clearModelCache } from '../lib/model-cache'
+import { isIOS } from '../lib/device'
 
 const INIT_TIMEOUT_MS = 120_000
 
@@ -34,6 +35,13 @@ export default function ModelProvider({ children }: { children: ReactNode }) {
     if (llmInstance) {
       setStatus('ready')
       setProgress(100)
+      return
+    }
+
+    if (isIOS()) {
+      setStatus('unsupported')
+      setError(null)
+      setProgress(0)
       return
     }
 
@@ -80,7 +88,10 @@ export default function ModelProvider({ children }: { children: ReactNode }) {
           baseOptions: {
             modelAssetPath: modelUrl,
           },
-          maxTokens: 4096,
+          // KV cache size scales with maxTokens. We keep this conservative
+          // because mobile WebKit's per-tab memory budget is tight, and the
+          // model bytes already eat most of it.
+          maxTokens: 2048,
           topK: 40,
           temperature: 0.7,
           randomSeed: Date.now(),
