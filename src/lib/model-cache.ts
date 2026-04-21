@@ -1,11 +1,22 @@
-const CACHE_NAME = 'karatuai-model-cache-v4'
+const CACHE_NAME = 'karatuai-model-cache-v5'
 const LEGACY_CACHE_NAMES = [
   'karatuai-model-cache-v1',
   'karatuai-model-cache-v2',
   'karatuai-model-cache-v3',
+  'karatuai-model-cache-v4',
 ]
 const MODEL_URL = 'https://models.karatuai.com/gemma-4-E2B-it-web.task'
 const EXPECTED_SIZE = 2_003_697_664
+
+// 50 MB chunks balance two failure modes on phones: small enough that an
+// interrupted download (screen lock, app backgrounded) only loses up to one
+// chunk's worth of bytes, large enough that we don't pay TCP setup cost on
+// every other megabyte. The SW assembly logic and these constants are
+// duplicated in public/sw.js — keep them in sync if any of these change.
+const CHUNK_SIZE = 50 * 1024 * 1024
+const TOTAL_CHUNKS = Math.ceil(EXPECTED_SIZE / CHUNK_SIZE)
+const CHUNK_TIMEOUT_MS = 120_000
+const CHUNK_MAX_ATTEMPTS = 4
 
 async function evictLegacyCaches(): Promise<void> {
   if (!('caches' in window)) return
@@ -30,27 +41,187 @@ async function ensurePersistentStorage(): Promise<void> {
   }
 }
 
-function isValidSize(size: number): boolean {
-  return size === EXPECTED_SIZE
+function chunkUrl(index: number): string {
+  return `${MODEL_URL}?chunk=${index}`
 }
 
-// Validates a cached entry by reading just the Content-Length header. We
-// deliberately never call .blob() on the cached Response — that would try to
-// materialize the full ~1.87 GB into JS heap and silently OOM on iOS Safari
-// (tab cap ~1.5 GB) and low-RAM Android. The streaming downloader always sets
-// Content-Length when it stores the entry, so the header check is sufficient.
-async function isCachedAndValid(cache: Cache): Promise<boolean> {
-  const cached = await cache.match(MODEL_URL)
+function expectedChunkSize(index: number): number {
+  if (index < TOTAL_CHUNKS - 1) return CHUNK_SIZE
+  return EXPECTED_SIZE - (TOTAL_CHUNKS - 1) * CHUNK_SIZE
+}
+
+async function isChunkComplete(cache: Cache, index: number): Promise<boolean> {
+  const cached = await cache.match(chunkUrl(index))
   if (!cached) return false
   const len = parseInt(cached.headers.get('content-length') ?? '0', 10)
-  if (len > 0 && isValidSize(len)) return true
-  // Pre-streaming entries lacked Content-Length; treat them as invalid rather
-  // than fall back to a heap-busting blob read.
-  await cache.delete(MODEL_URL).catch(() => undefined)
-  return false
+  return len === expectedChunkSize(index)
 }
 
-async function downloadModel(
+async function countCompleteChunks(cache: Cache): Promise<number> {
+  let count = 0
+  for (let i = 0; i < TOTAL_CHUNKS; i++) {
+    if (await isChunkComplete(cache, i)) count++
+  }
+  return count
+}
+
+async function isCachedAndValid(cache: Cache): Promise<boolean> {
+  return (await countCompleteChunks(cache)) === TOTAL_CHUNKS
+}
+
+async function downloadChunk(
+  cache: Cache,
+  index: number,
+  onChunkBytes?: (bytes: number) => void,
+): Promise<void> {
+  const start = index * CHUNK_SIZE
+  const end = Math.min(start + CHUNK_SIZE - 1, EXPECTED_SIZE - 1)
+  const expected = end - start + 1
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), CHUNK_TIMEOUT_MS)
+
+  let received = 0
+  try {
+    const response = await fetch(MODEL_URL, {
+      headers: { Range: `bytes=${start}-${end}` },
+      signal: controller.signal,
+    })
+
+    if (response.status !== 206 && !(index === 0 && response.status === 200)) {
+      // A 200 for chunks beyond the first means the server ignored our Range
+      // header and is sending the full file. Caching that as chunk N would
+      // corrupt the model on assembly, so abort and surface the failure.
+      throw new Error(`Chunk ${index} unexpected HTTP ${response.status}`)
+    }
+    if (!response.body) {
+      throw new Error(`Chunk ${index} response had no body`)
+    }
+
+    const tracker = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, c) {
+        received += chunk.byteLength
+        onChunkBytes?.(received)
+        c.enqueue(chunk)
+      },
+    })
+
+    const trackedBody = response.body.pipeThrough(tracker)
+
+    const cacheHeaders = new Headers()
+    cacheHeaders.set('Content-Type', 'application/octet-stream')
+    cacheHeaders.set('Content-Length', String(expected))
+
+    await cache.put(
+      chunkUrl(index),
+      new Response(trackedBody, { status: 200, statusText: 'OK', headers: cacheHeaders }),
+    )
+
+    if (received !== expected) {
+      await cache.delete(chunkUrl(index)).catch(() => undefined)
+      throw new Error(`Chunk ${index} truncated: ${received}/${expected}`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function downloadChunkWithRetry(
+  cache: Cache,
+  index: number,
+  onChunkBytes?: (bytes: number) => void,
+): Promise<void> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < CHUNK_MAX_ATTEMPTS; attempt++) {
+    try {
+      await downloadChunk(cache, index, onChunkBytes)
+      return
+    } catch (err) {
+      lastErr = err
+      if (attempt === CHUNK_MAX_ATTEMPTS - 1) break
+      // Exponential backoff: 1s, 2s, 4s. Network blip or server hiccup usually
+      // clears within seconds; longer waits frustrate users on the loading screen.
+      const delay = 1000 * Math.pow(2, attempt)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`Chunk ${index} failed after retries`)
+}
+
+interface WakeLockHandle {
+  release: () => void
+}
+
+// Phones aggressively suspend background tabs and abort in-flight fetches when
+// the screen locks. Wake Lock keeps the screen on while the page is visible,
+// which on iOS Safari 16.4+ and Android Chrome is enough to prevent the
+// suspend. We re-acquire on visibilitychange because the OS releases the lock
+// when the tab hides.
+async function acquireWakeLock(): Promise<WakeLockHandle> {
+  const nav = navigator as Navigator & {
+    wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> }
+  }
+  if (!nav.wakeLock) {
+    return { release: () => undefined }
+  }
+
+  let sentinel: { release: () => Promise<void> } | null = null
+  const tryAcquire = async () => {
+    if (document.visibilityState !== 'visible') return
+    try {
+      sentinel = await nav.wakeLock!.request('screen')
+    } catch {
+      sentinel = null
+    }
+  }
+  await tryAcquire()
+
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') void tryAcquire()
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+
+  return {
+    release: () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      sentinel?.release().catch(() => undefined)
+      sentinel = null
+    },
+  }
+}
+
+async function downloadAllChunks(
+  cache: Cache,
+  onProgress?: (progress: number) => void,
+): Promise<void> {
+  let completedBytes = 0
+  for (let i = 0; i < TOTAL_CHUNKS; i++) {
+    if (await isChunkComplete(cache, i)) completedBytes += expectedChunkSize(i)
+  }
+
+  const reportProgress = (inFlightBytes = 0) => {
+    const total = completedBytes + inFlightBytes
+    onProgress?.(Math.min(98, 2 + Math.round((total / EXPECTED_SIZE) * 96)))
+  }
+  reportProgress()
+
+  const wakeLock = await acquireWakeLock()
+  try {
+    for (let i = 0; i < TOTAL_CHUNKS; i++) {
+      if (await isChunkComplete(cache, i)) continue
+      await downloadChunkWithRetry(cache, i, (bytes) => reportProgress(bytes))
+      completedBytes += expectedChunkSize(i)
+      reportProgress()
+    }
+  } finally {
+    wakeLock.release()
+  }
+}
+
+// Last-ditch path used only when the Cache API is missing entirely. Holds the
+// full model in JS heap, which only desktops survive — but this branch is
+// effectively unreachable on the browsers we target.
+async function downloadModelToBlob(
   onProgress?: (progress: number) => void,
 ): Promise<Blob> {
   const response = await fetch(MODEL_URL)
@@ -60,14 +231,11 @@ async function downloadModel(
   if (!response.body) {
     throw new Error('Model download has no response body')
   }
-
   const total = parseInt(response.headers.get('content-length') ?? '0', 10)
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let received = 0
-
   onProgress?.(2)
-
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -77,107 +245,17 @@ async function downloadModel(
       onProgress?.(Math.min(98, Math.round((received / total) * 95) + 2))
     }
   }
-
-  if (total > 0 && received !== total) {
-    throw new Error(`Truncated download: ${received} of ${total} bytes`)
+  if (received !== EXPECTED_SIZE) {
+    throw new Error(`Truncated download: ${received}/${EXPECTED_SIZE}`)
   }
-
-  const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' })
-  if (!isValidSize(blob.size)) {
-    throw new Error(`Downloaded model size mismatch (${blob.size} bytes, expected ${EXPECTED_SIZE}) — likely truncated`)
-  }
-  return blob
-}
-
-async function tryCacheBlob(cache: Cache, blob: Blob): Promise<void> {
-  try {
-    const headers = new Headers({
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': String(blob.size),
-    })
-    await cache.put(MODEL_URL, new Response(blob, { headers }))
-  } catch (err) {
-    console.warn('Failed to cache model (will re-download next session):', err)
-  }
-}
-
-// Streams the model body straight from the network into Cache Storage without
-// ever holding all 1.87 GB in the JS heap. A TransformStream sits between the
-// network and the cache so we can count bytes for progress without tee-ing the
-// stream — tee leaves chunks queued in memory whenever one branch reads ahead
-// of the other, which on a 1.87 GB file was enough to OOM phones (notably iOS
-// Safari and 3 GB Android devices). pipeThrough applies natural backpressure
-// so memory stays flat for the whole transfer.
-async function streamDownloadIntoCache(
-  cache: Cache,
-  onProgress?: (progress: number) => void,
-): Promise<void> {
-  const response = await fetch(MODEL_URL)
-  if (!response.ok) {
-    throw new Error(`Model download failed: HTTP ${response.status}`)
-  }
-  if (!response.body) {
-    throw new Error('Model download has no response body')
-  }
-
-  const total = parseInt(response.headers.get('content-length') ?? '0', 10)
-
-  onProgress?.(2)
-
-  let received = 0
-  const progressTransform = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      received += chunk.byteLength
-      if (total > 0) {
-        onProgress?.(Math.min(98, Math.round((received / total) * 95) + 2))
-      }
-      controller.enqueue(chunk)
-    },
-  })
-
-  const trackedBody = response.body.pipeThrough(progressTransform)
-
-  // Cache stores Content-Type / Content-Length only. CORS headers are added
-  // back by the SW when it serves the cached response to MediaPipe, so the
-  // cached entry doesn't need to preserve them itself.
-  const cacheHeaders = new Headers()
-  cacheHeaders.set(
-    'Content-Type',
-    response.headers.get('content-type') || 'application/octet-stream',
-  )
-  if (total > 0) cacheHeaders.set('Content-Length', String(total))
-
-  try {
-    await cache.put(
-      MODEL_URL,
-      new Response(trackedBody, {
-        status: 200,
-        statusText: 'OK',
-        headers: cacheHeaders,
-      }),
-    )
-  } catch (err) {
-    await cache.delete(MODEL_URL).catch(() => undefined)
-    throw err
-  }
-
-  if (total > 0 && received !== total) {
-    await cache.delete(MODEL_URL).catch(() => undefined)
-    throw new Error(`Truncated download: ${received} of ${total} bytes`)
-  }
-
-  if (!(await isCachedAndValid(cache))) {
-    throw new Error(`Cached model failed validation after download (expected ${EXPECTED_SIZE} bytes)`)
-  }
+  return new Blob(chunks as BlobPart[], { type: 'application/octet-stream' })
 }
 
 export async function getCachedModelUrl(
   onProgress?: (progress: number) => void,
 ): Promise<string> {
   if (!('caches' in window)) {
-    // Browsers without Cache API are rare on the platforms we target; the
-    // blob path costs ~2 GB of JS heap and only desktops realistically survive.
-    const blob = await downloadModel(onProgress)
+    const blob = await downloadModelToBlob(onProgress)
     return URL.createObjectURL(blob)
   }
 
@@ -187,35 +265,24 @@ export async function getCachedModelUrl(
 
   if (await isCachedAndValid(cache)) {
     onProgress?.(100)
-    // Returning the network URL (not a blob: URL) keeps the model out of JS
-    // heap entirely. The service worker intercepts MediaPipe's fetch for this
-    // URL and serves it from the cache we just populated.
+    // The SW intercepts this URL and assembles the chunked entries into a
+    // single streaming Response for MediaPipe. The model never enters JS heap.
     return MODEL_URL
   }
 
-  try {
-    await streamDownloadIntoCache(cache, onProgress)
-    onProgress?.(100)
-    return MODEL_URL
-  } catch (streamErr) {
-    console.warn('Streaming download failed, retrying with in-memory path:', streamErr)
-    const blob = await downloadModel(onProgress)
-    await tryCacheBlob(cache, blob)
-    onProgress?.(100)
-    return URL.createObjectURL(blob)
+  await downloadAllChunks(cache, onProgress)
+  if (!(await isCachedAndValid(cache))) {
+    throw new Error('Download completed but cache validation failed')
   }
+  onProgress?.(100)
+  return MODEL_URL
 }
 
 export async function isModelCached(): Promise<boolean> {
   if (!('caches' in window)) return false
   try {
     const cache = await caches.open(CACHE_NAME)
-    const cached = await cache.match(MODEL_URL)
-    if (!cached) return false
-    const len = parseInt(cached.headers.get('content-length') ?? '0', 10)
-    if (len > 0) return isValidSize(len)
-    const blob = await cached.blob()
-    return isValidSize(blob.size)
+    return await isCachedAndValid(cache)
   } catch {
     return false
   }
